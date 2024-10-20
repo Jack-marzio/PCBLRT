@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 from datetime import datetime
 from pdf_creator import create_pdf_report, count_pdfs_in_directory
+from recovery_data import recovery_sheet
 
 
 def show_splash_screen():
@@ -138,6 +139,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
         # Aggiungi il log alla listbox
         log_entry = f"{date_time} - {sender} -> {receiver} : {msg_received} | {msg_sent}"
+        recovery_sheet(date_time, sender, receiver, msg_received, msg_sent)
         listbox_logs.insert(tk.END, log_entry)
 
         # Salva il log nella lista interna
