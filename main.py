@@ -4,7 +4,7 @@ Created on Fri Oct 11 19:25:52 2024
 
 @author: Jacopo
 
-FW : 1.1
+FW : 1.2
 """
 
 #%% MANAGE LIBRARIES:
@@ -16,11 +16,13 @@ from directory_selection import select_directory  # Importa la funzione
     
 #%% SETUP:
     
+FW = 1.2
+    
 # Registriamo la data e l'ora attuali
 data_ora_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 log_comunicazioni = []
-show_splash_screen()
+show_splash_screen(FW)
 
 #%% DIRECTORY SELECTION:
     

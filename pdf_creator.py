@@ -91,6 +91,7 @@ def truncate_text(text, max_length):
 def create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files):
     """
     Creates a PDF report of radio communications, organizing the data into a table with controlled text length.
+    Now includes a header image in the report.
 
     Args:
         operator (str): The name of the operator who logged in.
@@ -115,9 +116,20 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
     pdf = PDF(orientation='L')  # 'L' stands for landscape
     pdf.add_page()
 
-    # Report header
+    # Add header image
+    # Assuming the image is in the current directory and is named 'logo.png'
+    logo_path = 'logoPICCOLOSENZASFONDO.png'
+    if os.path.exists(logo_path):
+        pdf.image(logo_path, x=10, y=8, w=30)  # Adjust 'x', 'y', and 'w' as needed
+    else:
+        print(f"Logo image not found at {logo_path}")
+
+    # Move below the image
+    pdf.set_xy(50, 15)  # Adjust 'x' and 'y' depending on the image size
+
+    # Report header with title
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(280, 10, f"Radio Communication Report n° {n_files}/2024", ln=True, align="C")
+    pdf.cell(200, 10, f"Radio Communication Report n° {n_files}/2024", ln=True, align="C")
     pdf.ln(10)
 
     # Operator info and login datetime
@@ -128,22 +140,22 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
 
     # Table headers
     pdf.set_font("Arial", "B", 9)
-    pdf.cell(60, 10, "Date/Time", 1, 0, 'C')
-    pdf.cell(40, 10, "Sender", 1, 0, 'C')
-    pdf.cell(40, 10, "Receiver", 1, 0, 'C')
-    pdf.cell(70, 10, "Message Received", 1, 0, 'C')
-    pdf.cell(70, 10, "Message Sent", 1, 1, 'C')  # 1,1 means move to the next line
+    pdf.cell(35, 10, "Date/Time", 1, 0, 'C')
+    pdf.cell(30, 10, "Sender", 1, 0, 'C')
+    pdf.cell(30, 10, "Receiver", 1, 0, 'C')
+    pdf.cell(90, 10, "Message Received", 1, 0, 'C')
+    pdf.cell(90, 10, "Message Sent", 1, 1, 'C')  # 1,1 means move to the next line
 
     # Insert communication log into table with controlled text truncation
     for entry in communication_log:
         log_datetime, sender, receiver, message_received, message_sent = entry
         
         # Truncate text to keep the table clean
-        pdf.cell_with_truncation(60, 10, log_datetime, 1, 'C', max_length=25)
-        pdf.cell_with_truncation(40, 10, sender, 1, 'C', max_length=20)
-        pdf.cell_with_truncation(40, 10, receiver, 1, 'C', max_length=20)
-        pdf.cell_with_truncation(70, 10, message_received, 1, 'C', max_length=35)
-        pdf.cell_with_truncation(70, 10, message_sent, 1, 'C', max_length=35)
+        pdf.cell_with_truncation(35, 10, log_datetime, 1, 'C', max_length=25)
+        pdf.cell_with_truncation(30, 10, sender, 1, 'C', max_length=20)
+        pdf.cell_with_truncation(30, 10, receiver, 1, 'C', max_length=20)
+        pdf.cell_with_truncation(90, 10, message_received, 1, 'C', max_length=70)
+        pdf.cell_with_truncation(90, 10, message_sent, 1, 'C', max_length=70)
         pdf.ln(10)  # Move to the next line
 
     # Sanitize the file name to remove invalid characters

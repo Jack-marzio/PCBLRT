@@ -5,9 +5,41 @@ from PIL import Image, ImageTk
 from datetime import datetime
 from pdf_creator import create_pdf_report, count_pdfs_in_directory
 from recovery_data import recovery_sheet
+import openpyxl  # Se stai usando file Excel per il recovery
+
+def load_recovery_file(directory):
+    """
+    Cerca un file di recovery nella cartella e chiede all'utente se vuole ripristinarlo.
+    Restituisce i dati recuperati sotto forma di lista.
+    """
+    recovery_data = []
+    recovery_dir = os.path.join(directory, 'recovery')
+
+    if not os.path.exists(recovery_dir):
+        return None  # Nessun file di recovery
+
+    # Trova l'ultimo file di recovery (in questo caso si presume che il più recente sia il più utile)
+    files = [f for f in os.listdir(recovery_dir) if f.endswith('.xlsx')]
+    if files:
+        latest_recovery_file = os.path.join(recovery_dir, max(files))  # Prende il file più recente
+
+        # Chiede se l'utente vuole ripristinare il file
+        response = messagebox.askyesno("Ripristina dati", f"Trovato file di recovery: {latest_recovery_file}. Vuoi ripristinarlo?")
+        if response:  # Se l'utente accetta di ripristinare
+            try:
+                # Carica i dati dal file Excel di recovery
+                workbook = openpyxl.load_workbook(latest_recovery_file)
+                sheet = workbook.active
+                for row in sheet.iter_rows(min_row=2, values_only=True):  # Salta l'intestazione
+                    recovery_data.append(row)
+                workbook.close()
+            except Exception as e:
+                messagebox.showerror("Errore", f"Errore durante il caricamento del file di recovery: {e}")
+    
+    return recovery_data if recovery_data else None
 
 
-def show_splash_screen():
+def show_splash_screen(FW):
     """
     Mostra una finestra iniziale con un'immagine e del testo.
     """
@@ -40,7 +72,7 @@ def show_splash_screen():
     title_label.pack(pady=10)
 
     # Mostra i crediti in basso
-    credit_label = tk.Label(splash, text="Created by Jacopo Marzio\nproprieties of G.C. Besozzo V1.0", font=("Helvetica", 8))
+    credit_label = tk.Label(splash, text=f"Created by Jacopo Marzio\nproprieties of G.C. Besozzo V{FW}", font=("Helvetica", 8))
     credit_label.pack(side="bottom", pady=10)
 
     # Chiude la finestra dopo 3 secondi
@@ -139,7 +171,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
         # Aggiungi il log alla listbox
         log_entry = f"{date_time} - {sender} -> {receiver} : {msg_received} | {msg_sent}"
-        recovery_sheet(date_time, sender, receiver, msg_received, msg_sent)
+        recovery_sheet(date_time, sender, receiver, msg_received, msg_sent)  # Salva nel file di recovery
         listbox_logs.insert(tk.END, log_entry)
 
         # Salva il log nella lista interna
@@ -152,6 +184,8 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
         entry_receiver.delete(0, tk.END)
         entry_msg_received.delete(0, tk.END)
         entry_msg_sent.delete(0, tk.END)
+        
+
 
     def generate_pdf():
         operator = entry_operator.get()
@@ -196,6 +230,9 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
             return None
 
     # Inizializza la finestra Tkinter
+    
+  
+            
     root = tk.Tk()
     root.title(program_title)
     root.geometry("1200x800")
@@ -318,6 +355,8 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
     # Carica e ridimensiona le immagini delle bandiere
     flag_en = resize_image("uk.png", 50, 30)
     flag_it = resize_image("it.png", 50, 30)
+    
+  
 
     # Bottoni per cambiare lingua
     if flag_en:
@@ -331,6 +370,15 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
     # Etichetta del titolo della listbox
     listbox_label.config(text=translations[current_language]["listbox_header"])
+    
+    # Prima di iniziare, controlla se esistono file di recovery
+    recovered_logs = load_recovery_file(os.getcwd())
+    if recovered_logs:
+        for log in recovered_logs:
+            # Carica ogni log nella listbox e nella lista interna communication_log
+            log_entry = f"{log[0]} - {log[1]} -> {log[2]} : {log[3]} | {log[4]}"
+            listbox_logs.insert(tk.END, log_entry)
+            communication_log.append(log)
 
     # Avvia la finestra Tkinter
     root.mainloop()

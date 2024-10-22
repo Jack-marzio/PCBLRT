@@ -5,6 +5,7 @@ Created on Sun Oct 20 11:32:41 2024
 @author: Jacopo
 """
 
+
 import pandas as pd
 import os
 
@@ -43,8 +44,20 @@ def recovery_sheet(d_t, s, r, m_s, m_r):
     filename = os.path.join(directory, f"{sanitized_d_t}_recovery.xlsx")
    
     # Salvare il DataFrame in un file Excel nella directory specificata
-    RECOVERY.to_excel(filename, index=True, engine='openpyxl')
+    RECOVERY.to_excel(filename, index=False, engine='openpyxl')
    
     print(f"File salvato come: {filename}")
+    
+    
+
+
+
+# Esempio di come usare le funzioni
+# selected_directory = select_directory()  # Selezione della directory
+# log_file = check_existing_log(selected_directory)
+# if log_file:
+#     # Continuare con i vecchi log, poi alla fine unire i dati
+#     new_data = pd.DataFrame({...})  # I nuovi dati registrati
+#     merge_logs(log_file, new_data, 'percorso_del_file_finale.xlsx')
 
 
