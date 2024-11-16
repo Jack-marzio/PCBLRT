@@ -11,7 +11,7 @@ import os
 from PIL import Image, ImageTk
 
 
-def select_directory():
+def select_directory(logo_path, flag_list):
     """
     Mostra una finestra Tkinter per la selezione della directory di salvataggio dei PDF.
     
@@ -23,17 +23,17 @@ def select_directory():
         if choice == 'external':
             selected_dir = entry_external_dir.get()
             if not selected_dir:
-                messagebox.showerror("Errore", "Per favore, seleziona una directory esterna.")
+                messagebox.showerror("Errore", "Per favore, seleziona una cartella esterna.")
                 return
             directory = selected_dir
-        else:
+        elif choice != 'external' or choice != 'drive':
             # Definisci una directory locale predefinita
             directory = os.path.join(os.getcwd(), 'reports')
             if not os.path.exists(directory):
                 try:
                     os.makedirs(directory)
                 except Exception as e:
-                    messagebox.showerror("Errore", f"Impossibile creare la directory: {e}")
+                    messagebox.showerror("Errore", f"Impossibile creare la cartella: {e}")
                     return
         selected_directory[0] = directory
         root.destroy()
@@ -55,27 +55,27 @@ def select_directory():
     
     # Inizializza la finestra principale
     root = tk.Tk()
-    root.title("Seleziona la Directory di Salvataggio")
+    root.title("Seleziona una cartella di Salvataggio")
     root.geometry("1200x800")
     root.resizable(True, True)
     
     # Imposta l'immagine come icona nella barra in alto
-    icon_image = ImageTk.PhotoImage(Image.open("logoPICCOLOSENZASFONDO.png").resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
+    icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
     root.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
     
     var_save_option = tk.StringVar(value='local')
     selected_directory = [None]
     
     # Titolo
-    label_title = tk.Label(root, text="Seleziona la Directory per Salvare i PDF", font=("Helvetica", 16))
+    label_title = tk.Label(root, text="Seleziona una cartella di Salvataggio", font=("Helvetica", 16))
     label_title.pack(pady=20)
     
     # Radiobutton per salvataggio locale
-    rb_local = ttk.Radiobutton(root, text="Salva nella Directory Locale", variable=var_save_option, value='local', command=toggle_entry)
+    rb_local = ttk.Radiobutton(root, text="Salva nella cartella Locale", variable=var_save_option, value='local', command=toggle_entry)
     rb_local.pack(anchor='w', padx=20, pady=5)
     
     # Radiobutton per salvataggio esterno
-    rb_external = ttk.Radiobutton(root, text="Scegli Directory Esterna", variable=var_save_option, value='external', command=toggle_entry)
+    rb_external = ttk.Radiobutton(root, text="Scegli cartella Esterna", variable=var_save_option, value='external', command=toggle_entry)
     rb_external.pack(anchor='w', padx=20, pady=5)
     
     # Frame per l'input della directory esterna
@@ -105,8 +105,8 @@ def select_directory():
     
     # Carica e ridimensiona le immagini delle bandiere
     try:
-        flag_en = resize_image("uk.png", 50, 30)
-        flag_it = resize_image("it.png", 50, 30)
+        flag_en = resize_image( flag_list[1], 50, 30)
+        flag_it = resize_image( flag_list[0], 50, 30)
         
         btn_en = tk.Button(language_frame, image=flag_en, command=lambda: change_language('en'))
         btn_it = tk.Button(language_frame, image=flag_it, command=lambda: change_language('it'))
@@ -136,14 +136,14 @@ def select_directory():
             root.title("Select Save Directory")
         elif lang == 'it':
             texts = {
-                "title": "Seleziona la Directory di Salvataggio",
-                "save_local": "Salva nella Directory Locale",
-                "save_external": "Scegli Directory Esterna",
+                "title": "Seleziona una cartella di Salvataggio",
+                "save_local": "Salva nella cartella Locale",
+                "save_external": "Scegli cartella Esterna",
                 "browse": "Sfoglia...",
-                "selected_dir": "Nessuna directory selezionata",
+                "selected_dir": "Nessuna cartella selezionata",
                 "proceed": "Avanti",
             }
-            root.title("Seleziona la Directory di Salvataggio")
+            root.title("Seleziona la cartella di Salvataggio")
         else:
             return  # Lingua non supportata
         

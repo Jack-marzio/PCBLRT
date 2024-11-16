@@ -88,7 +88,7 @@ def truncate_text(text, max_length):
         return text[:max_length - 3] + '...'
     return text
 
-def create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files):
+def create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files, logo_path):
     """
     Creates a PDF report of radio communications, organizing the data into a table with controlled text length.
     Now includes a header image in the report.
@@ -118,7 +118,6 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
 
     # Add header image
     # Assuming the image is in the current directory and is named 'logo.png'
-    logo_path = 'logoPICCOLOSENZASFONDO.png'
     if os.path.exists(logo_path):
         pdf.image(logo_path, x=10, y=8, w=30)  # Adjust 'x', 'y', and 'w' as needed
     else:
@@ -129,22 +128,22 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
 
     # Report header with title
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(200, 10, f"Radio Communication Report n° {n_files}/2024", ln=True, align="C")
+    pdf.cell(200, 10, f"Rapporto registrazione delle comunicazioni radio n° {n_files}/2024", ln=True, align="C")
     pdf.ln(10)
 
     # Operator info and login datetime
     pdf.set_font("Arial", "B", 9)
-    pdf.cell(280, 10, f"Operator: {operator} - Logged in at: {login_datetime}", ln=True)
-    pdf.cell(280, 10, f"Event: {event} - Logged in at: {login_datetime}", ln=True)
+    pdf.cell(280, 10, f"Operatore: {operator} - Logged in at: {login_datetime}", ln=True)
+    pdf.cell(280, 10, f"Evvento: {event} - Logged in at: {login_datetime}", ln=True)
     pdf.ln(10)
 
     # Table headers
     pdf.set_font("Arial", "B", 9)
-    pdf.cell(35, 10, "Date/Time", 1, 0, 'C')
-    pdf.cell(30, 10, "Sender", 1, 0, 'C')
-    pdf.cell(30, 10, "Receiver", 1, 0, 'C')
-    pdf.cell(90, 10, "Message Received", 1, 0, 'C')
-    pdf.cell(90, 10, "Message Sent", 1, 1, 'C')  # 1,1 means move to the next line
+    pdf.cell(35, 10, "Data/Time", 1, 0, 'C')
+    pdf.cell(30, 10, "Mittente", 1, 0, 'C')
+    pdf.cell(30, 10, "Ricevente", 1, 0, 'C')
+    pdf.cell(90, 10, "Messaggio ricevuto", 1, 0, 'C')
+    pdf.cell(90, 10, "Messaggio trasmesso", 1, 1, 'C')  # 1,1 means move to the next line
 
     # Insert communication log into table with controlled text truncation
     for entry in communication_log:
@@ -160,11 +159,11 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
 
     # Sanitize the file name to remove invalid characters
     operator_clean = sanitize_filename(operator)
-    file_name = f"radio_communication_report_{operator_clean}_{n_files}_2024.pdf"
+    file_name = f"rapporto_comunicazioni_radio_{operator_clean}_{n_files}_2024.pdf"
     file_path = os.path.join(directory, file_name)
 
     try:
         pdf.output(file_path)
-        print(f"Report saved at: {file_path}")
+        print(f"Rapporto salvato in: {file_path}")
     except Exception as e:
-        print(f"Error saving PDF: {e}")
+        print(f"Errore salvataggio PDF: {e}")

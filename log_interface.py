@@ -18,11 +18,13 @@ def load_recovery_file(directory):
     if not os.path.exists(recovery_dir):
         return None  # Nessun file di recovery
 
-    # Trova l'ultimo file di recovery (in questo caso si presume che il più recente sia il più utile)
+    # Trova l'ultimo file di recovery (il più recente in base alla data di modifica)
     files = [f for f in os.listdir(recovery_dir) if f.endswith('.xlsx')]
     if files:
-        latest_recovery_file = os.path.join(recovery_dir, max(files))  # Prende il file più recente
-
+        # Costruisce i percorsi completi dei file
+        files_with_paths = [os.path.join(recovery_dir, f) for f in files]
+        # Trova il file con la data di modifica più recente
+        latest_recovery_file = max(files_with_paths, key=os.path.getmtime)
         # Chiede se l'utente vuole ripristinare il file
         response = messagebox.askyesno("Ripristina dati", f"Trovato file di recovery: {latest_recovery_file}. Vuoi ripristinarlo?")
         if response:  # Se l'utente accetta di ripristinare
@@ -39,7 +41,7 @@ def load_recovery_file(directory):
     return recovery_data if recovery_data else None
 
 
-def show_splash_screen(FW):
+def show_splash_screen(FW, logo_path):
     """
     Mostra una finestra iniziale con un'immagine e del testo.
     """
@@ -51,12 +53,12 @@ def show_splash_screen(FW):
 
     # Carica l'immagine (modifica il percorso in base alla tua immagine)
     try:
-        image = Image.open("logoPICCOLOSENZASFONDO.png")  # Sostituisci con il percorso della tua immagine
+        image = Image.open(logo_path)  # Sostituisci con il percorso della tua immagine
         image = image.resize((300, 300), Image.LANCZOS)  # Ridimensiona l'immagine
         img = ImageTk.PhotoImage(image)
         
         # Imposta l'immagine come icona nella barra in alto
-        icon_image = ImageTk.PhotoImage(Image.open("logoPICCOLOSENZASFONDO.png").resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
+        icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
         splash.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
     except Exception as e:
         img = None
@@ -81,7 +83,7 @@ def show_splash_screen(FW):
     # Mantieni la finestra in esecuzione
     splash.mainloop()
 
-def radio_log_interface(login_datetime, communication_log, directory, n_files, logo_path='logoPICCOLOSENZASFONDO.png', program_title="Radio Communication Log"):
+def radio_log_interface(login_datetime, communication_log, directory, n_files, logo_path,flag_list, program_title="Radio Communication Log"):
     """
     Crea una GUI per il sistema di log radio.
     """
@@ -209,7 +211,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
         # Crea il report PDF
         try:
-            create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files)
+            create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files, logo_path)
             messagebox.showinfo("Success", translations[current_language]["pdf_success"].format(directory))
         except Exception as e:
             messagebox.showerror(translations[current_language]["error_title"], f"Errore nella generazione del PDF: {e}")
@@ -250,7 +252,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
             logo_label.pack(side='left', padx=10)
             
             # Imposta l'immagine come icona nella barra in alto
-            icon_image = ImageTk.PhotoImage(Image.open("logoPICCOLOSENZASFONDO.png").resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
+            icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
             root.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
 
     title_label = tk.Label(top_frame, text=program_title, font=("Helvetica", 20))
@@ -261,7 +263,6 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
     input_frame.pack(pady=10, padx=20, fill="x")
 
     labels = {}
-    entries = {}
 
     # Operatore
     labels["operator"] = tk.Label(input_frame, text=translations[current_language]["operator"])
@@ -353,8 +354,8 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
             return None
 
     # Carica e ridimensiona le immagini delle bandiere
-    flag_en = resize_image("uk.png", 50, 30)
-    flag_it = resize_image("it.png", 50, 30)
+    flag_en = resize_image(flag_list[1], 50, 30)
+    flag_it = resize_image(flag_list[0], 50, 30)
     
   
 

@@ -4,45 +4,53 @@ Created on Fri Oct 11 19:25:52 2024
 
 @author: Jacopo
 
-FW : 1.2
+FW : 2.1
 """
 
 #%% MANAGE LIBRARIES:
     
+
+import sys
 from datetime import datetime
 from log_interface import radio_log_interface, show_splash_screen
 from pdf_creator import count_pdfs_in_directory, make_directory
-from directory_selection import select_directory  # Importa la funzione
+from directory_selection import select_directory
+from sys_param import global_parameters_dict
     
 #%% SETUP:
     
-FW = 1.2
-    
-# Registriamo la data e l'ora attuali
-data_ora_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+FW = global_parameters_dict['Firmware_version']
+dirve_path = global_parameters_dict['Drive_path']
+data_ora_login = global_parameters_dict['Data_hour_login']
+logo_path = global_parameters_dict['Logo_path']
+program_title = global_parameters_dict['Program_title']
+flag_list = global_parameters_dict['Flags_logo']
 
 log_comunicazioni = []
-show_splash_screen(FW)
+
+#%% START UP:
+
+show_splash_screen(FW, logo_path)
 
 #%% DIRECTORY SELECTION:
     
-# Chiama la funzione per selezionare la directory
-selected_directory = select_directory()
+selected_directory = select_directory(logo_path, flag_list)
+
 if not selected_directory:
     print("Directory non selezionata. Uscita dal programma.")
-    exit()
+    exit_program = sys.exit()
 
 #%% LOG BEGIN:
  
-# Inizio del log delle comunicazioni radio
+
 n_protocol = count_pdfs_in_directory(selected_directory)
-# print("Inizia a registrare le comunicazioni radio (scrivi 'fine' per terminare).")
-data_ora_main =  datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 radio_log_interface(
-    data_ora_main, 
+    data_ora_login, 
     log_comunicazioni, 
     selected_directory, 
     n_protocol, 
-    logo_path='logoPICCOLOSENZASFONDO.png', 
-    program_title="Radio Communication Log"
+    logo_path, 
+    flag_list,
+    program_title
 )
