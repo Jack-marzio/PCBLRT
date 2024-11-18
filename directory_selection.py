@@ -9,6 +9,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 from PIL import Image, ImageTk
+import socket
+import time
+
+def check_connection():
+    """Verifica la connessione a Internet."""
+    try:
+        # Prova a connetterti a un server (es. Google)
+        socket.create_connection(("8.8.8.8", 53), timeout=2)
+        return True
+    except OSError:
+        return False
+    
 
 
 def select_directory(logo_path, flag_list):
@@ -62,6 +74,7 @@ def select_directory(logo_path, flag_list):
     # Imposta l'immagine come icona nella barra in alto
     icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
     root.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
+   
     
     var_save_option = tk.StringVar(value='local')
     selected_directory = [None]
@@ -70,6 +83,31 @@ def select_directory(logo_path, flag_list):
     label_title = tk.Label(root, text="Seleziona una cartella di Salvataggio", font=("Helvetica", 16))
     label_title.pack(pady=20)
     
+    # Frame per LED e stato
+    led_frame = tk.Frame(root)
+    led_frame.pack(fill="x", pady=5)
+  
+    # Imposta un LED che verifichi la connessione a internet:
+    def update_led():
+        if check_connection():
+          canvas.itemconfig(led, fill="green")
+          lbl_status.config(text="Connesso a Internet", fg="black")
+        else:
+          canvas.itemconfig(led, fill="red")
+          lbl_status.config(text="Non connesso a Internet", fg="black")
+      
+        root.after(2000, update_led)
+  
+    # Canvas per il LED
+    canvas = tk.Canvas(led_frame, width=50, height=60)
+    canvas.pack(side="left", padx=10)
+    led = canvas.create_oval(15, 15, 40, 40, fill="red")
+  
+    # Etichetta per lo stato della connessione
+    lbl_status = tk.Label(led_frame, text="Attendo...", font=("Helvetica", 10))
+    lbl_status.pack(side="left", padx=10)
+  
+    update_led()
     # Radiobutton per salvataggio locale
     rb_local = ttk.Radiobutton(root, text="Salva nella cartella Locale", variable=var_save_option, value='local', command=toggle_entry)
     rb_local.pack(anchor='w', padx=20, pady=5)
@@ -166,3 +204,7 @@ def select_directory(logo_path, flag_list):
     root.mainloop()
     
     return selected_directory[0]
+
+
+
+

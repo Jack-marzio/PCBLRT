@@ -6,6 +6,7 @@ from datetime import datetime
 from pdf_creator import create_pdf_report, count_pdfs_in_directory
 from recovery_data import recovery_sheet
 import openpyxl  # Se stai usando file Excel per il recovery
+from directory_selection import check_connection
 
 def load_recovery_file(directory):
     """
@@ -257,6 +258,32 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
     title_label = tk.Label(top_frame, text=program_title, font=("Helvetica", 20))
     title_label.pack(side='left')
+    
+    # Frame per LED e stato
+    led_frame = tk.Frame(root)
+    led_frame.pack(fill="x", pady=5)
+ 
+    # Imposta un LED che verifichi la connessione a internet:
+    def update_led():
+       if check_connection():
+         canvas.itemconfig(led, fill="green")
+         lbl_status.config(text="Connesso a Internet", fg="black")
+       else:
+         canvas.itemconfig(led, fill="red")
+         lbl_status.config(text="Non connesso a Internet", fg="black")
+     
+       root.after(2000, update_led)
+ 
+    # Canvas per il LED
+    canvas = tk.Canvas(led_frame, width=50, height=60)
+    canvas.pack(side="left", padx=10)
+    led = canvas.create_oval(15, 15, 40, 40, fill="red")
+ 
+    # Etichetta per lo stato della connessione
+    lbl_status = tk.Label(led_frame, text="Attendo...", font=("Helvetica", 10))
+    lbl_status.pack(side="left", padx=10)
+ 
+    update_led()
 
     # Frame per i campi di input
     input_frame = tk.Frame(root)

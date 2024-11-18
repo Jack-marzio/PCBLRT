@@ -4,7 +4,6 @@ Created on Fri Oct 11 19:25:52 2024
 
 @author: Jacopo
 
-FW : 2.1
 """
 
 #%% MANAGE LIBRARIES:

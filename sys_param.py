@@ -12,7 +12,7 @@ from datetime import datetime
     
 global_parameters_dict = {
  'Program_title': "Registro delle comunicazioni radio",
- 'Firmware_version': 2.1,
+ 'Firmware_version': 2.2,
  'Drive_path': "G:\Il mio Drive\TLC\LOG  RADIO",
  'Data_hour_login': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
  'Logo_path': 'logoPICCOLOSENZASFONDO.png',
