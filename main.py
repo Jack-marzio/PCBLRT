@@ -19,7 +19,7 @@ from sys_param import global_parameters_dict
 #%% SETUP:
     
 FW = global_parameters_dict['Firmware_version']
-dirve_path = global_parameters_dict['Drive_path']
+drive_path = global_parameters_dict['Drive_path']
 data_ora_login = global_parameters_dict['Data_hour_login']
 logo_path = global_parameters_dict['Logo_path']
 program_title = global_parameters_dict['Program_title']
@@ -33,7 +33,7 @@ show_splash_screen(FW, logo_path)
 
 #%% DIRECTORY SELECTION:
     
-selected_directory = select_directory(logo_path, flag_list)
+selected_directory = select_directory(logo_path, flag_list, drive_path)
 
 if not selected_directory:
     print("Directory non selezionata. Uscita dal programma.")

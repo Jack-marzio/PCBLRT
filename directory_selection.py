@@ -23,7 +23,7 @@ def check_connection():
     
 
 
-def select_directory(logo_path, flag_list):
+def select_directory(logo_path, flag_list, drive_path):
     """
     Mostra una finestra Tkinter per la selezione della directory di salvataggio dei PDF.
     
@@ -31,24 +31,29 @@ def select_directory(logo_path, flag_list):
         str: Il percorso della directory selezionata.
     """
     def proceed():
-        choice = var_save_option.get()
-        if choice == 'external':
-            selected_dir = entry_external_dir.get()
-            if not selected_dir:
-                messagebox.showerror("Errore", "Per favore, seleziona una cartella esterna.")
-                return
-            directory = selected_dir
-        elif choice != 'external' or choice != 'drive':
-            # Definisci una directory locale predefinita
-            directory = os.path.join(os.getcwd(), 'reports')
-            if not os.path.exists(directory):
-                try:
-                    os.makedirs(directory)
-                except Exception as e:
-                    messagebox.showerror("Errore", f"Impossibile creare la cartella: {e}")
-                    return
-        selected_directory[0] = directory
-        root.destroy()
+       choice = var_save_option.get()
+       if choice == 'external':
+           selected_dir = entry_external_dir.get()
+           if not selected_dir:
+               messagebox.showerror("Errore", "Per favore, seleziona una cartella esterna.")
+               return
+           directory = selected_dir
+       elif choice == 'drive':
+           directory = selected_drive_folder.get()
+           if not directory:
+               messagebox.showerror("Errore", "Per favore, seleziona una cartella nel Drive.")
+               return
+       else:
+           # Definisci una directory locale predefinita
+           directory = os.path.join(os.getcwd(), 'reports')
+           if not os.path.exists(directory):
+               try:
+                   os.makedirs(directory)
+               except Exception as e:
+                   messagebox.showerror("Errore", f"Impossibile creare la cartella: {e}")
+                   return
+       selected_directory[0] = directory
+       root.destroy()
     
     def browse():
         dir_selected = filedialog.askdirectory()
@@ -57,13 +62,34 @@ def select_directory(logo_path, flag_list):
             entry_external_dir.insert(0, dir_selected)
     
     def toggle_entry():
-        if var_save_option.get() == 'external':
-            entry_external_dir.config(state='normal')
-            btn_browse.config(state='normal')
-        else:
-            entry_external_dir.config(state='disabled')
-            btn_browse.config(state='disabled')
-            entry_external_dir.delete(0, tk.END)
+       if var_save_option.get() == 'external':
+           entry_external_dir.config(state='normal')
+           btn_browse.config(state='normal')
+           drive_frame.pack_forget()
+       elif var_save_option.get() == 'drive':
+           drive_frame.pack(anchor='w', padx=40, pady=5)
+           entry_external_dir.config(state='disabled')
+           btn_browse.config(state='disabled')
+           entry_external_dir.delete(0, tk.END)
+       else:
+           entry_external_dir.config(state='disabled')
+           btn_browse.config(state='disabled')
+           entry_external_dir.delete(0, tk.END)
+           drive_frame.pack_forget()
+           
+    def update_drive_folders():
+        try:
+            subfolders = [f.path for f in os.scandir(drive_path) if f.is_dir()]
+            menu_drive['menu'].delete(0, 'end')
+            for folder in subfolders:
+                menu_drive['menu'].add_command(label=folder, command=lambda value=folder: selected_drive_folder.set(value))
+            if subfolders:
+                selected_drive_folder.set(subfolders[0])
+            else:
+                selected_drive_folder.set('')
+                messagebox.showinfo("Info", "Nessuna sottocartella trovata nel Drive.")
+        except Exception as e:
+            messagebox.showerror("Errore", f"Errore durante il caricamento delle sottocartelle: {e}")
     
     # Inizializza la finestra principale
     root = tk.Tk()
@@ -108,6 +134,10 @@ def select_directory(logo_path, flag_list):
     lbl_status.pack(side="left", padx=10)
   
     update_led()
+    
+    rb_drive = ttk.Radiobutton(root, text="Salva nel Drive", variable=var_save_option, value='drive', command=toggle_entry)
+    rb_drive.pack(anchor='w', padx=20, pady=5)
+    
     # Radiobutton per salvataggio locale
     rb_local = ttk.Radiobutton(root, text="Salva nella cartella Locale", variable=var_save_option, value='local', command=toggle_entry)
     rb_local.pack(anchor='w', padx=20, pady=5)
@@ -127,6 +157,17 @@ def select_directory(logo_path, flag_list):
     entry_external_dir.config(state='disabled')
     btn_browse.config(state='disabled')
     
+    drive_frame = tk.Frame(root)
+    drive_frame.pack_forget()
+    
+    label_drive = tk.Label(drive_frame, text="Seleziona una sottocartella nel Drive:")
+    label_drive.pack(side='left', padx=5)
+
+    selected_drive_folder = tk.StringVar()
+    menu_drive = ttk.OptionMenu(drive_frame, selected_drive_folder, '')
+    menu_drive.pack(side='left', padx=5)
+    update_drive_folders()
+
     # Bottone "Avanti"
     btn_proceed = ttk.Button(root, text="Avanti", command=proceed)
     btn_proceed.pack(pady=20)
