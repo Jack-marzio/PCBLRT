@@ -134,7 +134,7 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
     # Operator info and login datetime
     pdf.set_font("Arial", "B", 9)
     pdf.cell(280, 10, f"Operatore: {operator} - Logged in at: {login_datetime}", ln=True)
-    pdf.cell(280, 10, f"Evvento: {event} - Logged in at: {login_datetime}", ln=True)
+    pdf.cell(280, 10, f"Evento: {event} - Logged in at: {login_datetime}", ln=True)
     pdf.ln(10)
 
     # Table headers
