@@ -134,7 +134,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
         }
     }
 
-    current_language = 'en'  # Lingua predefinita
+    current_language = 'it'  # Lingua predefinita
 
     def change_language(lang):
         nonlocal current_language
