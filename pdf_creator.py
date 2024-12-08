@@ -128,13 +128,13 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
 
     # Report header with title
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(200, 10, f"Rapporto registrazione delle comunicazioni radio n° {n_files}/2024", ln=True, align="C")
+    pdf.cell(200, 10, f"Rapporto registrazione delle comunicazioni radio n° {n_files}/{login_datetime[:4]}", ln=True, align="C")
     pdf.ln(10)
 
     # Operator info and login datetime
     pdf.set_font("Arial", "B", 9)
-    pdf.cell(280, 10, f"Operatore: {operator} - Logged in at: {login_datetime}", ln=True)
-    pdf.cell(280, 10, f"Evento: {event} - Logged in at: {login_datetime}", ln=True)
+    pdf.cell(280, 10, f"Operatore: {operator}", ln=True)
+    pdf.cell(280, 10, f"Evento: {event}", ln=True)
     pdf.ln(10)
 
     # Table headers

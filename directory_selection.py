@@ -39,7 +39,7 @@ def select_directory(logo_path, flag_list, drive_path):
                return
            directory = selected_dir
        elif choice == 'drive':
-           directory = selected_drive_folder.get()
+           directory = drive_path
            if not directory:
                messagebox.showerror("Errore", "Per favore, seleziona una cartella nel Drive.")
                return
@@ -71,25 +71,14 @@ def select_directory(logo_path, flag_list, drive_path):
            entry_external_dir.config(state='disabled')
            btn_browse.config(state='disabled')
            entry_external_dir.delete(0, tk.END)
+           drive_frame.pack_forget()
        else:
            entry_external_dir.config(state='disabled')
            btn_browse.config(state='disabled')
            entry_external_dir.delete(0, tk.END)
            drive_frame.pack_forget()
            
-    def update_drive_folders():
-        try:
-            subfolders = [f.path for f in os.scandir(drive_path) if f.is_dir()]
-            menu_drive['menu'].delete(0, 'end')
-            for folder in subfolders:
-                menu_drive['menu'].add_command(label=folder, command=lambda value=folder: selected_drive_folder.set(value))
-            if subfolders:
-                selected_drive_folder.set(subfolders[0])
-            else:
-                selected_drive_folder.set('')
-                messagebox.showinfo("Info", "Nessuna sottocartella trovata nel Drive.")
-        except Exception as e:
-            messagebox.showerror("Errore", f"Errore durante il caricamento delle sottocartelle: {e}")
+
     
     # Inizializza la finestra principale
     root = tk.Tk()
@@ -102,7 +91,7 @@ def select_directory(logo_path, flag_list, drive_path):
     root.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
    
     
-    var_save_option = tk.StringVar(value='local')
+    var_save_option = tk.StringVar(value='drive')
     selected_directory = [None]
     
     # Titolo
@@ -160,13 +149,6 @@ def select_directory(logo_path, flag_list, drive_path):
     drive_frame = tk.Frame(root)
     drive_frame.pack_forget()
     
-    label_drive = tk.Label(drive_frame, text="Seleziona una sottocartella nel Drive:")
-    label_drive.pack(side='left', padx=5)
-
-    selected_drive_folder = tk.StringVar()
-    menu_drive = ttk.OptionMenu(drive_frame, selected_drive_folder, '')
-    menu_drive.pack(side='left', padx=5)
-    update_drive_folders()
 
     # Bottone "Avanti"
     btn_proceed = ttk.Button(root, text="Avanti", command=proceed)
