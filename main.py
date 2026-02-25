@@ -18,14 +18,14 @@ from sys_param import global_parameters_dict
     
 #%% SETUP:
     
-FW = global_parameters_dict['Firmware_version']
-drive_path = global_parameters_dict['Drive_path']
-data_ora_login = global_parameters_dict['Data_hour_login']
-logo_path = global_parameters_dict['Logo_path']
-program_title = global_parameters_dict['Program_title']
-flag_list = global_parameters_dict['Flags_logo']
+FW                      = global_parameters_dict['Firmware_version']
+drive_path              = global_parameters_dict['Drive_path']
+data_ora_login          = global_parameters_dict['Data_hour_login']
+logo_path               = global_parameters_dict['Logo_path']
+program_title           = global_parameters_dict['Program_title']
+flag_list               = global_parameters_dict['Flags_logo']
 
-log_comunicazioni = []
+log_comunicazioni       = []
 
 #%% START UP:
 

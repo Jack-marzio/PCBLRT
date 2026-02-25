@@ -3,7 +3,7 @@ import os
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 from datetime import datetime
-from pdf_creator import create_pdf_report, count_pdfs_in_directory
+from pdf_creator import create_xlsx_report, create_pdf_report, count_pdfs_in_directory, count_xlsx_in_directory
 from recovery_data import recovery_sheet
 import openpyxl  # Se stai usando file Excel per il recovery
 from directory_selection import check_connection
@@ -13,8 +13,8 @@ def load_recovery_file(directory):
     Cerca un file di recovery nella cartella e chiede all'utente se vuole ripristinarlo.
     Restituisce i dati recuperati sotto forma di lista.
     """
-    recovery_data = []
-    recovery_dir = os.path.join(directory, 'recovery')
+    recovery_data       = []
+    recovery_dir        = os.path.join(directory, 'recovery')
 
     if not os.path.exists(recovery_dir):
         return None  # Nessun file di recovery
@@ -23,16 +23,22 @@ def load_recovery_file(directory):
     files = [f for f in os.listdir(recovery_dir) if f.endswith('.xlsx')]
     if files:
         # Costruisce i percorsi completi dei file
-        files_with_paths = [os.path.join(recovery_dir, f) for f in files]
+        files_with_paths        = [os.path.join(recovery_dir, f) for f in files]
         # Trova il file con la data di modifica più recente
-        latest_recovery_file = max(files_with_paths, key=os.path.getmtime)
-        # Chiede se l'utente vuole ripristinare il file
-        response = messagebox.askyesno("Ripristina dati", f"Trovato file di recovery: {latest_recovery_file}. Vuoi ripristinarlo?")
+        latest_recovery_file    = max(files_with_paths, key=os.path.getmtime)
+        file_timestamp          = os.path.getmtime(latest_recovery_file)
+        file_date               = datetime.fromtimestamp(file_timestamp).date()
+        today_date              = datetime.today().date()
+        if file_date == today_date :
+            # Chiede se l'utente vuole ripristinare il file
+            response                = messagebox.askyesno("Ripristina dati", f"Trovato file di recovery: {latest_recovery_file}. Vuoi ripristinarlo?")
+        else:
+            response = False
         if response:  # Se l'utente accetta di ripristinare
             try:
                 # Carica i dati dal file Excel di recovery
-                workbook = openpyxl.load_workbook(latest_recovery_file)
-                sheet = workbook.active
+                workbook    = openpyxl.load_workbook(latest_recovery_file)
+                sheet       = workbook.active
                 for row in sheet.iter_rows(min_row=2, values_only=True):  # Salta l'intestazione
                     recovery_data.append(row)
                 workbook.close()
@@ -54,9 +60,9 @@ def show_splash_screen(FW, logo_path):
 
     # Carica l'immagine (modifica il percorso in base alla tua immagine)
     try:
-        image = Image.open(logo_path)  # Sostituisci con il percorso della tua immagine
-        image = image.resize((300, 300), Image.LANCZOS)  # Ridimensiona l'immagine
-        img = ImageTk.PhotoImage(image)
+        image   = Image.open(logo_path)  # Sostituisci con il percorso della tua immagine
+        image   = image.resize((300, 300), Image.LANCZOS)  # Ridimensiona l'immagine
+        img     = ImageTk.PhotoImage(image)
         
         # Imposta l'immagine come icona nella barra in alto
         icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
@@ -71,7 +77,7 @@ def show_splash_screen(FW, logo_path):
         label_img.pack(pady=10)
 
     # Mostra il titolo sotto l'immagine
-    title_label = tk.Label(splash, text="Pro_Civ_Bes_Radio_Log_Tool", font=("Helvetica", 20, "bold"))
+    title_label = tk.Label(splash, text="Registro Comunicazioni Radio", font=("Helvetica", 20, "bold"))
     title_label.pack(pady=10)
 
     # Mostra i crediti in basso
@@ -110,6 +116,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
             "pdf_success": "PDF report generated at {}",
             "pdf_title": "Radio Communication Log",
             "listbox_header": "Logs",
+            "xlsx_success": "XLSX report generated at {}",
         },
         'it': {
             "operator": "Operatore:",
@@ -131,6 +138,7 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
             "pdf_success": "Rapporto PDF generato in {}",
             "pdf_title": "Registro Comunicazioni Radio",
             "listbox_header": "Log",
+            "xlsx_success": "Rapporto XLSX generato in {}"
         }
     }
 
@@ -140,8 +148,8 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
         nonlocal current_language
         if lang not in translations:
             return
-        current_language = lang
-        texts = translations[lang]
+        current_language    = lang
+        texts               = translations[lang]
         # Aggiorna i testi dei label
         labels["operator"].config(text=texts["operator"])
         labels["event"].config(text=texts["event"])
@@ -163,10 +171,10 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
         else:
             date_time = entry_manual_datetime.get()
 
-        sender = entry_sender.get()
-        receiver = entry_receiver.get()
-        msg_received = entry_msg_received.get()
-        msg_sent = entry_msg_sent.get()
+        sender          = entry_sender.get()
+        receiver        = entry_receiver.get()
+        msg_received    = entry_msg_received.get()
+        msg_sent        = entry_msg_sent.get()
 
         if not (date_time and sender and receiver and msg_received and msg_sent):
             messagebox.showerror(translations[current_language]["error_title"], translations[current_language]["fields_error"])
@@ -191,8 +199,8 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
 
     def generate_pdf():
-        operator = entry_operator.get()
-        event = entry_event.get()
+        operator    = entry_operator.get()
+        event       = entry_event.get()
         if not operator:
             messagebox.showerror(translations[current_language]["error_title"], translations[current_language]["operator_error"])
             return
@@ -208,14 +216,18 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
                 return
 
         # Conta i PDF presenti nella directory
-        n_files = count_pdfs_in_directory(directory)
+        n_files         = count_pdfs_in_directory(directory)
+        xlsx_files      = count_xlsx_in_directory(directory)
 
         # Crea il report PDF
         try:
+            create_xlsx_report(operator, event, login_datetime, communication_log, directory, xlsx_files, logo_path)
             create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files, logo_path)
             messagebox.showinfo("Success", translations[current_language]["pdf_success"].format(directory))
+            messagebox.showinfo("Success", translations[current_language]["xlsx_success"].format(directory))
         except Exception as e:
             messagebox.showerror(translations[current_language]["error_title"], f"Errore nella generazione del PDF: {e}")
+            
 
     def toggle_manual_datetime():
         if var_auto_datetime.get():
@@ -388,12 +400,12 @@ def radio_log_interface(login_datetime, communication_log, directory, n_files, l
 
     # Bottoni per cambiare lingua
     if flag_en:
-        btn_en = tk.Button(language_frame, image=flag_en, command=lambda: change_language('en'))
-        btn_en.image = flag_en  # Mantiene un riferimento all'immagine
+        btn_en          = tk.Button(language_frame, image=flag_en, command=lambda: change_language('en'))
+        btn_en.image    = flag_en  # Mantiene un riferimento all'immagine
         btn_en.pack(side='left', padx=10)
     if flag_it:
-        btn_it = tk.Button(language_frame, image=flag_it, command=lambda: change_language('it'))
-        btn_it.image = flag_it  # Mantiene un riferimento all'immagine
+        btn_it          = tk.Button(language_frame, image=flag_it, command=lambda: change_language('it'))
+        btn_it.image    = flag_it  # Mantiene un riferimento all'immagine
         btn_it.pack(side='left', padx=10)
 
     # Etichetta del titolo della listbox

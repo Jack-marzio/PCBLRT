@@ -9,6 +9,11 @@ from fpdf import FPDF
 from datetime import datetime
 import re 
 
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image
+from openpyxl.styles import Font, Alignment
+import textwrap
+
 
 year = datetime.now().strftime("%Y")
 
@@ -54,6 +59,28 @@ def count_pdfs_in_directory(directory):
         # Filter and count files that end with .pdf
         pdf_files = [file for file in files if file.endswith('.pdf')]
         return len(pdf_files) + 1
+    
+    except FileNotFoundError:
+        print(f"Directory '{directory}' not found.")
+        return 0
+
+def count_xlsx_in_directory(directory): 
+    """
+    Counts the number of xlsx files in the specified directory.
+
+    Args:
+        directory (str): The directory in which to count PDF files.
+
+    Returns:
+        int: The number of xlsx files in the directory.
+    """
+    try:
+        # List all files in the directory
+        files = os.listdir(directory)
+        
+        # Filter and count files that end with .xlsx
+        xlsx_files_counter = [file for file in files if file.endswith('.xlsx')]
+        return len(xlsx_files_counter) + 1
     
     except FileNotFoundError:
         print(f"Directory '{directory}' not found.")
@@ -107,59 +134,90 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
     """
 
     class PDF(FPDF):
-        def cell_with_truncation(self, width, height, text, border=0, align='L', max_length=None):
-            if max_length:
-                text = truncate_text(text, max_length)
-            self.cell(width, height, text, border, 0, align)
 
-    # Create PDF object with landscape orientation
-    pdf = PDF(orientation='L')  # 'L' stands for landscape
+        def header(self):
+            # Logo
+            if hasattr(self, "logo_path") and os.path.exists(self.logo_path):
+                self.image(self.logo_path, 10, 8, 25)
+    
+            self.set_font("Arial", "B", 16)
+            self.set_xy(0, 15)
+            self.cell(0, 10, self.title_report, border=0, ln=True, align="C")
+            self.ln(10)
+    
+            # Info operatore
+            self.set_font("Arial", "", 10)
+            self.cell(0, 6, f"Operatore: {self.operator}", ln=True)
+            self.cell(0, 6, f"Evento: {self.event}", ln=True)
+            self.ln(5)
+    
+            self.draw_table_header()
+    
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Arial", "I", 8)
+            self.cell(0, 5, f"Pagina {self.page_no()}", align="C")
+    
+        def draw_table_header(self):
+            self.set_font("Arial", "B", 9)
+            self.set_fill_color(230, 230, 230)
+    
+            headers = ["Data/Time", "Mittente", "Ricevente",
+                       "Messaggio ricevuto", "Messaggio trasmesso"]
+    
+            widths = [35, 30, 30, 90, 90]
+    
+            for i in range(len(headers)):
+                self.cell(widths[i], 8, headers[i], border=1, align='C', fill=True)
+            self.ln()
+
+    pdf = PDF(orientation="L")
+    pdf.logo_path = logo_path
+    pdf.operator = operator
+    pdf.event = event
+    pdf.title_report = f"Rapporto registrazione comunicazioni radio n° {n_files}/{login_datetime[:4]}"
+    
     pdf.add_page()
-
-    # Add header image
-    # Assuming the image is in the current directory and is named 'logo.png'
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=10, y=8, w=30)  # Adjust 'x', 'y', and 'w' as needed
-    else:
-        print(f"Logo image not found at {logo_path}")
-
-    # Move below the image
-    pdf.set_xy(50, 15)  # Adjust 'x' and 'y' depending on the image size
-
-    # Report header with title
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(200, 10, f"Rapporto registrazione delle comunicazioni radio n° {n_files}/{login_datetime[:4]}", ln=True, align="C")
-    pdf.ln(10)
-
-    # Operator info and login datetime
-    pdf.set_font("Arial", "B", 9)
-    pdf.cell(280, 10, f"Operatore: {operator}", ln=True)
-    pdf.cell(280, 10, f"Evento: {event}", ln=True)
-    pdf.ln(10)
-
-    # Table headers
-    pdf.set_font("Arial", "B", 9)
-    pdf.cell(35, 10, "Data/Time", 1, 0, 'C')
-    pdf.cell(30, 10, "Mittente", 1, 0, 'C')
-    pdf.cell(30, 10, "Ricevente", 1, 0, 'C')
-    pdf.cell(90, 10, "Messaggio ricevuto", 1, 0, 'C')
-    pdf.cell(90, 10, "Messaggio trasmesso", 1, 1, 'C')  # 1,1 means move to the next line
-
-    # Insert communication log into table with controlled text truncation
+    pdf.set_font("Arial", "", 9)
+    
+    col_widths = [35, 30, 30, 90, 90]
+    line_height = 5
+    
     for entry in communication_log:
-        log_datetime, sender, receiver, message_received, message_sent = entry
-        
-        # Truncate text to keep the table clean
-        pdf.cell_with_truncation(35, 10, log_datetime, 1, 'C', max_length=25)
-        pdf.cell_with_truncation(30, 10, sender, 1, 'C', max_length=20)
-        pdf.cell_with_truncation(30, 10, receiver, 1, 'C', max_length=20)
-        pdf.cell_with_truncation(90, 10, message_received, 1, 'C', max_length=70)
-        pdf.cell_with_truncation(90, 10, message_sent, 1, 'C', max_length=70)
-        pdf.ln(10)  # Move to the next line
-
+    
+        row = [str(x) for x in entry]
+    
+        # Spezza parole troppo lunghe
+        for i in range(len(row)):
+            row[i] = "\n".join(textwrap.wrap(row[i], 40))
+    
+        # Calcola altezza massima riga
+        max_lines = 0
+        for i in range(len(row)):
+            lines = row[i].count("\n") + 1
+            max_lines = max(max_lines, lines)
+    
+        row_height = line_height * max_lines
+    
+        # Page break automatico
+        if pdf.get_y() + row_height > pdf.page_break_trigger:
+            pdf.add_page()
+    
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+    
+        for i in range(len(row)):
+            pdf.set_xy(x_start, y_start)
+            align = 'C' if i < 3 else 'L'
+            pdf.multi_cell(col_widths[i], line_height, row[i],
+                           border=1, align=align)
+            x_start += col_widths[i]
+    
+        pdf.set_y(y_start + row_height)
+    
     # Sanitize the file name to remove invalid characters
     operator_clean = sanitize_filename(operator)
-    file_name = f"rapporto_comunicazioni_radio_{operator_clean}_{n_files}_2024.pdf"
+    file_name = f"rapporto_comunicazioni_radio_{operator_clean}_{n_files}_{login_datetime[:4]}.pdf"
     file_path = os.path.join(directory, file_name)
 
     try:
@@ -167,3 +225,66 @@ def create_pdf_report(operator, event, login_datetime, communication_log, direct
         print(f"Rapporto salvato in: {file_path}")
     except Exception as e:
         print(f"Errore salvataggio PDF: {e}")
+        
+
+
+        
+def create_xlsx_report(operator, event, login_datetime, communication_log, directory, n_files, logo_path):
+    
+    
+    IMG_WITH, IMG_HEIGHT = 150, 150
+    TEXT_SIZE = 12
+    
+    table_header = ["Data/Ora", "Mittente", "Ricevente", "Messaggio ricevuto", "Messaggio trasmesso"]
+    
+    img = Image(logo_path)
+    workbook = Workbook()
+    sheet = workbook.active
+    
+    img.width, img.height = IMG_WITH, IMG_HEIGHT
+    sheet.add_image(img, "A3")
+    
+    sup_header = [operator, event, login_datetime, n_files]
+    sheet.append(sup_header)
+    sheet.append(table_header)
+    
+    for col in range(1, len(table_header) + 1):
+        cell = sheet.cell(row=3, column=col)
+        cell.font = Font(bold=True, size=TEXT_SIZE)
+        cell.alignment = Alignment(horizontal="center")
+    
+    max_lengths = [len(header) for header in table_header]
+    
+    for data_log in communication_log:
+        log_datetime, sender, receiver, message_received, message_sent = data_log
+        row_data = [log_datetime, sender, receiver, message_received, message_sent]
+        
+        for i, value in enumerate(row_data):
+            max_lengths[i] = max(max_lengths[i], len(str(value)))
+        
+        sheet.append(row_data)
+    
+    max_width = 20
+    for i, length in enumerate(max_lengths, start=1):
+        col_letter = sheet.cell(row=1, column=i).column_letter
+        if length > max_width:
+            sheet.column_dimensions[col_letter].width = max_width
+            for row in sheet.iter_rows(min_col=i, max_col=i):
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True)
+        else:
+            sheet.column_dimensions[col_letter].width = length + 2
+    
+    operator_clean = sanitize_filename(operator)
+    file_name = f"rapporto_comunicazioni_radio_{operator_clean}_{n_files}_{login_datetime[:4]}.xlsx"
+    file_path = os.path.join(directory, file_name)
+
+    try:
+        workbook.save(file_path)
+        print(f"Rapporto XLSX salvato in: {file_path}")
+    except Exception as e:
+        print(f"Errore salvataggio XLSX: {e}")
+
+    
+    
+    
