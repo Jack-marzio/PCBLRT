@@ -6,16 +6,35 @@ Created on Sat Nov 16 12:30:18 2024
 """
 
 
-from datetime import datetime
+
 
 #%% Global parameters:
+    
+def leggi_config(file_path):
+    config = {}
 
-global_parameters_dict = {
- 'Program_title':       "Registro delle comunicazioni radio",
- 'Firmware_version':    5.0,
- 'Drive_path':          "G:\Il mio Drive\TLC\LOG  RADIO",
- 'Data_hour_login':      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
- 'Logo_path':           'logoPICCOLOSENZASFONDO.png',
- 'Flags_logo':          ['it.png', 'uk.png'],
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for riga in f:
+            riga = riga.strip()
 
-}
+            # Salta righe vuote
+            if not riga:
+                continue
+
+            # Divide chiave e valore
+            chiave, valore = riga.split("=", 1)
+            chiave = chiave.strip()
+            valore = valore.strip()
+
+            # Gestione liste tipo [a, b, c]
+            if valore.startswith("[") and valore.endswith("]"):
+                valore = valore[1:-1]  # rimuove []
+                elementi = [v.strip() for v in valore.split(",")]
+                config[chiave] = elementi
+            else:
+                config[chiave] = valore
+
+    return config
+global_parameters_dict = leggi_config('configurator.txt')
+
+

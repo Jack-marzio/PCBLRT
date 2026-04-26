@@ -5,12 +5,15 @@ Created on Tue Oct 15 21:14:33 2024
 @author: Jacopo
 """
 
-import tkinter as tk
+
 from tkinter import ttk, messagebox, filedialog
-import os
 from PIL import Image, ImageTk
+import tkinter as tk
 import socket
-import time
+import os
+
+
+
 
 def check_connection():
     """Verifica la connessione a Internet."""

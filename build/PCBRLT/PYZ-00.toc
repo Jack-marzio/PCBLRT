@@ -1,1 +1,0 @@
-('C:\\Users\\Jacopo\\Desktop\\PCBLRT\\build\\PCBRLT\\PYZ-00.pyz', [])

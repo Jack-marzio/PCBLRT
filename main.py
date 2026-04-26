@@ -9,27 +9,31 @@ Created on Fri Oct 11 19:25:52 2024
 #%% MANAGE LIBRARIES:
     
 
-import sys
-from datetime import datetime
+
 from log_interface import radio_log_interface, show_splash_screen
-from pdf_creator import count_pdfs_in_directory, make_directory
 from directory_selection import select_directory
+from pdf_creator import count_pdfs_in_directory
 from sys_param import global_parameters_dict
+from datetime import datetime
+import sys
+
+
     
 #%% SETUP:
     
 FW                      = global_parameters_dict['Firmware_version']
 drive_path              = global_parameters_dict['Drive_path']
-data_ora_login          = global_parameters_dict['Data_hour_login']
+data_ora_login          = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 logo_path               = global_parameters_dict['Logo_path']
 program_title           = global_parameters_dict['Program_title']
 flag_list               = global_parameters_dict['Flags_logo']
+proprieties             =  global_parameters_dict['Proprieties']
 
 log_comunicazioni       = []
 
 #%% START UP:
 
-show_splash_screen(FW, logo_path)
+show_splash_screen(FW, logo_path, proprieties)
 
 #%% DIRECTORY SELECTION:
     
@@ -51,5 +55,5 @@ radio_log_interface(
     n_protocol, 
     logo_path, 
     flag_list,
-    program_title
+    program_title 
 )
