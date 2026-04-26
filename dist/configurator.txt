@@ -1,0 +1,7 @@
+Program_title=Registro delle comunicazioni radio
+Firmware_version=5.0
+Drive_path=G:\Il mio Drive
+Logo_path= img\logo_SOLBIATE_OLONA.jpeg
+Flags_logo=[img\it.png, img\uk.png]
+Proprieties=G.C. SOLBIATE OLONA
+

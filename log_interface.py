@@ -1,12 +1,15 @@
-import tkinter as tk
-import os
+
+from pdf_creator import create_xlsx_report, create_pdf_report, count_pdfs_in_directory, count_xlsx_in_directory
+from directory_selection import check_connection
+from recovery_data import recovery_sheet
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 from datetime import datetime
-from pdf_creator import create_xlsx_report, create_pdf_report, count_pdfs_in_directory, count_xlsx_in_directory
-from recovery_data import recovery_sheet
-import openpyxl  # Se stai usando file Excel per il recovery
-from directory_selection import check_connection
+import tkinter as tk
+import openpyxl
+import os
+
+
 
 def load_recovery_file(directory):
     """
@@ -48,7 +51,7 @@ def load_recovery_file(directory):
     return recovery_data if recovery_data else None
 
 
-def show_splash_screen(FW, logo_path):
+def show_splash_screen(FW, logo_path, proprieties):
     """
     Mostra una finestra iniziale con un'immagine e del testo.
     """
@@ -81,7 +84,7 @@ def show_splash_screen(FW, logo_path):
     title_label.pack(pady=10)
 
     # Mostra i crediti in basso
-    credit_label = tk.Label(splash, text=f"Created by Jacopo Marzio\nproprieties of G.C. Besozzo V{FW}", font=("Helvetica", 8))
+    credit_label = tk.Label(splash, text=f"Created by Jacopo Marzio\nproprieties of {proprieties} V{FW}", font=("Helvetica", 8))
     credit_label.pack(side="bottom", pady=10)
 
     # Chiude la finestra dopo 3 secondi

@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('logoPICCOLOSENZASFONDO.png', '.'), ('uk.png', '.'), ('it.png', '.')],
+    datas=[('img\\logo_solbiate_olona.jpeg', '.'), ('img\\uk.png', '.'), ('img\\it.png', '.')],
     hiddenimports=['pandas', 'openpyxl'],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['logoPICCOLOSENZASFONDO.ico'],
+    version='version.txt',
+    icon=['img\\logo_solbiate_olona.ico'],
 )

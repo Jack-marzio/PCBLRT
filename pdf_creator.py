@@ -4,15 +4,15 @@ Created on Fri Oct 11 19:42:02 2024
 
 @author: Jacopo
 """
-import os
-from fpdf import FPDF
-from datetime import datetime
-import re 
 
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image
 from openpyxl.styles import Font, Alignment
+from openpyxl.drawing.image import Image
+from openpyxl import Workbook
+from datetime import datetime
+from fpdf import FPDF
 import textwrap
+import os
+import re 
 
 
 year = datetime.now().strftime("%Y")
