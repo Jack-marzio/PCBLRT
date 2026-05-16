@@ -1,59 +1,131 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Oct 11 19:25:52 2024
+main.py
+Entry point dell'applicazione Radio Communication Log.
+Coordina le componenti tramite la classe Application.
 
-@author: Jacopo
-
+Variabili d'ambiente riconosciute:
+  WS_TOKEN      — token segreto per la dashboard remota (obbligatorio in produzione)
+  FLY_APP_NAME  — impostato automaticamente da Fly.io; costruisce l'URL pubblico
 """
 
-#%% MANAGE LIBRARIES:
-    
-
-
-from log_interface import radio_log_interface, show_splash_screen
-from directory_selection import select_directory
-from pdf_creator import count_pdfs_in_directory
-from sys_param import global_parameters_dict
-from datetime import datetime
+import os
+import secrets
 import sys
+from datetime import datetime
+
+from config_manager import ConfigManager
+from directory_selector import DirectorySelector
+from log_interface import RadioLogInterface, ModeSelector, SplashScreen
+from report_creator import ReportCreator
+from web_dashboard import WebDashboard
 
 
-    
-#%% SETUP:
-    
-FW                      = global_parameters_dict['Firmware_version']
-drive_path              = global_parameters_dict['Drive_path']
-data_ora_login          = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-logo_path               = global_parameters_dict['Logo_path']
-program_title           = global_parameters_dict['Program_title']
-flag_list               = global_parameters_dict['Flags_logo']
-proprieties             =  global_parameters_dict['Proprieties']
+class Application:
+    """
+    Coordina l'intero ciclo di vita dell'applicazione:
+      1. Carica la configurazione
+      2. Mostra la splash screen
+      3. Avvia la dashboard WebSocket remota (thread daemon)
+      4. Chiede la directory di salvataggio
+      5. Collega il callback bidirezionale (risposte remote → UI)
+      6. Avvia l'interfaccia di log (Tkinter)
+    """
 
-log_comunicazioni       = []
+    def __init__(self, config_path: str = "configurator.txt"):
+        self._cfg      = ConfigManager(config_path)
+        self._reporter = ReportCreator()
 
-#%% START UP:
+    # ------------------------------------------------------------------
+    # Public
+    # ------------------------------------------------------------------
 
-show_splash_screen(FW, logo_path, proprieties)
+    def run(self) -> None:
+        cfg = self._cfg
 
-#%% DIRECTORY SELECTION:
-    
-selected_directory = select_directory(logo_path, flag_list, drive_path)
+        firmware      = cfg["Firmware_version"]
+        drive_path    = cfg["Drive_path"]
+        logo_path     = cfg["Logo_path"]
+        program_title = cfg["Program_title"]
+        flag_list     = cfg["Flags_logo"]
+        proprieties   = cfg["Proprieties"]
+        web_port      = int(cfg.get("Web_dashboard_port", 8080))
+        login_dt      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-if not selected_directory:
-    print("Directory non selezionata. Uscita dal programma.")
-    exit_program = sys.exit()
+        # ── Remote enabled flag ──────────────────────────────────────
+        # Impostare Remote_enabled = true nel configuratore per abilitare
+        # la funzionalità di dashboard remota su Fly.io.
+        # Se false (o assente) il tool funziona solo in locale.
+        remote_enabled = cfg.get("Remote_enabled", "false").strip().lower() == "true"
 
-#%% LOG BEGIN:
- 
+        # ── Token e host pubblico ────────────────────────────────────
+        # Priorità: configurator.txt  >  variabile d'ambiente  >  generato
+        # deploy.py scrive automaticamente WS_TOKEN e FLY_APP_NAME.
+        token = (
+            cfg.get("WS_TOKEN")
+            or os.environ.get("WS_TOKEN")
+        )
+        if not token:
+            token = secrets.token_urlsafe(32)
+            print(
+                f"\n  ⚠️   WS_TOKEN non trovato — token di sessione generato: {token}\n"
+                f"      Per uso stabile: python deploy.py deploy <org>\n"
+            )
 
-n_protocol = count_pdfs_in_directory(selected_directory)
+        fly_app = (
+            cfg.get("FLY_APP_NAME")
+            or os.environ.get("FLY_APP_NAME")
+        )
+        configured_host = f"{fly_app}.fly.dev" if fly_app else None
 
-radio_log_interface(
-    data_ora_login, 
-    log_comunicazioni, 
-    selected_directory, 
-    n_protocol, 
-    logo_path, 
-    flag_list,
-    program_title 
-)
+        # ── Selezione modalità a runtime ─────────────────────────────
+        # Mostrata solo se Remote_enabled = true E un host remoto è configurato.
+        public_host = None
+        if remote_enabled and configured_host:
+            mode = ModeSelector(logo_path=logo_path, lang="it").run()
+            public_host = configured_host if mode == "remote" else None
+        elif remote_enabled and not configured_host:
+            print(
+                "  ⚠️   Remote_enabled = true ma FLY_APP_NAME non configurato.\n"
+                "      Esegui: python deploy.py deploy <org>\n"
+            )
+
+        # 1. Splash screen
+        SplashScreen(firmware, logo_path, proprieties).show()
+
+        # 2. Dashboard WebSocket (thread daemon, callback aggiunto dopo)
+        dashboard = WebDashboard(
+            port=web_port,
+            token=token,
+            public_host=public_host,
+        )
+        dashboard.start()
+
+        # 3. Selezione directory di salvataggio
+        directory = DirectorySelector(logo_path, flag_list, drive_path).run()
+        if not directory:
+            print("Directory non selezionata. Uscita dal programma.")
+            sys.exit(0)
+
+        # 4. Numero di protocollo (conta i PDF già presenti)
+        n_protocol = self._reporter.count_files(directory, ".pdf")
+
+        # 5. Interfaccia principale
+        interface = RadioLogInterface(
+            login_datetime=login_dt,
+            directory=directory,
+            n_files=n_protocol,
+            logo_path=logo_path,
+            flag_list=flag_list,
+            program_title=program_title,
+            dashboard=dashboard,
+        )
+
+        # 6. Wiring bidirezionale: risposte remote → metodo thread-safe dell'interfaccia
+        dashboard.set_response_callback(interface.handle_remote_response)
+
+        interface.run()
+
+
+if __name__ == "__main__":
+    Application().run()

@@ -1,427 +1,637 @@
+# -*- coding: utf-8 -*-
+"""
+log_interface.py
+Splash screen e interfaccia principale di log delle comunicazioni radio.
+"""
 
-from pdf_creator import create_xlsx_report, create_pdf_report, count_pdfs_in_directory, count_xlsx_in_directory
-from directory_selection import check_connection
-from recovery_data import recovery_sheet
-from tkinter import ttk, messagebox
-from PIL import Image, ImageTk
-from datetime import datetime
-import tkinter as tk
-import openpyxl
 import os
+import tkinter as tk
+from datetime import datetime
+from tkinter import messagebox, ttk
+
+from PIL import Image, ImageTk
+
+from directory_selector import ConnectionChecker
+from recovery_manager import RecoveryManager
+from report_creator import ReportCreator
+from web_dashboard import WebDashboard
 
 
+# ======================================================================
+# Splash Screen
+# ======================================================================
 
-def load_recovery_file(directory):
+class SplashScreen:
     """
-    Cerca un file di recovery nella cartella e chiede all'utente se vuole ripristinarlo.
-    Restituisce i dati recuperati sotto forma di lista.
+    Mostra una finestra di benvenuto con logo, titolo e crediti,
+    che si chiude automaticamente dopo un intervallo configurabile.
     """
-    recovery_data       = []
-    recovery_dir        = os.path.join(directory, 'recovery')
 
-    if not os.path.exists(recovery_dir):
-        return None  # Nessun file di recovery
+    DISPLAY_MS = 3000
 
-    # Trova l'ultimo file di recovery (il più recente in base alla data di modifica)
-    files = [f for f in os.listdir(recovery_dir) if f.endswith('.xlsx')]
-    if files:
-        # Costruisce i percorsi completi dei file
-        files_with_paths        = [os.path.join(recovery_dir, f) for f in files]
-        # Trova il file con la data di modifica più recente
-        latest_recovery_file    = max(files_with_paths, key=os.path.getmtime)
-        file_timestamp          = os.path.getmtime(latest_recovery_file)
-        file_date               = datetime.fromtimestamp(file_timestamp).date()
-        today_date              = datetime.today().date()
-        if file_date == today_date :
-            # Chiede se l'utente vuole ripristinare il file
-            response                = messagebox.askyesno("Ripristina dati", f"Trovato file di recovery: {latest_recovery_file}. Vuoi ripristinarlo?")
-        else:
-            response = False
-        if response:  # Se l'utente accetta di ripristinare
-            try:
-                # Carica i dati dal file Excel di recovery
-                workbook    = openpyxl.load_workbook(latest_recovery_file)
-                sheet       = workbook.active
-                for row in sheet.iter_rows(min_row=2, values_only=True):  # Salta l'intestazione
-                    recovery_data.append(row)
-                workbook.close()
-            except Exception as e:
-                messagebox.showerror("Errore", f"Errore durante il caricamento del file di recovery: {e}")
-    
-    return recovery_data if recovery_data else None
+    def __init__(self, firmware: str, logo_path: str, proprieties: str):
+        self._firmware    = firmware
+        self._logo_path   = logo_path
+        self._proprieties = proprieties
+
+    def show(self) -> None:
+        """Apre la splash screen e attende che si chiuda."""
+        root = tk.Tk()
+        root.title("ProcivBesRadioTeamTool")
+        root.geometry("1200x800")
+        root.resizable(True, True)
+
+        try:
+            img_raw  = Image.open(self._logo_path).resize((300, 300), Image.LANCZOS)
+            img      = ImageTk.PhotoImage(img_raw)
+            icon_raw = Image.open(self._logo_path).resize((32, 32), Image.LANCZOS)
+            icon     = ImageTk.PhotoImage(icon_raw)
+            root.iconphoto(False, icon)
+            lbl_img = tk.Label(root, image=img)
+            lbl_img.image = img
+            lbl_img.pack(pady=10)
+        except Exception as e:
+            print(f"Errore caricamento immagine splash: {e}")
+
+        tk.Label(
+            root,
+            text="Registro Comunicazioni Radio",
+            font=("Helvetica", 20, "bold")
+        ).pack(pady=10)
+
+        tk.Label(
+            root,
+            text=(
+                f"Created by Jacopo Marzio\n"
+                f"proprieties of {self._proprieties} V{self._firmware}"
+            ),
+            font=("Helvetica", 8)
+        ).pack(side="bottom", pady=10)
+
+        root.after(self.DISPLAY_MS, root.destroy)
+        root.mainloop()
 
 
-def show_splash_screen(FW, logo_path, proprieties):
+
+
+# ======================================================================
+# Mode Selector
+# ======================================================================
+
+class ModeSelector:
     """
-    Mostra una finestra iniziale con un'immagine e del testo.
+    Finestra modale che chiede all'operatore se trasmettere
+    in modalità Locale o Remota (Fly.io).
+
+    Viene mostrata solo se Remote_enabled = true nel configuratore.
+    Restituisce "local" o "remote".
     """
-    # Creazione della finestra di benvenuto
-    splash = tk.Tk()
-    splash.title("ProcivBesRadioTeamtool")
-    splash.geometry("1200x800")  # Imposta le dimensioni della finestra
-    splash.resizable(True, True)  # Disabilita il ridimensionamento
 
-    # Carica l'immagine (modifica il percorso in base alla tua immagine)
-    try:
-        image   = Image.open(logo_path)  # Sostituisci con il percorso della tua immagine
-        image   = image.resize((300, 300), Image.LANCZOS)  # Ridimensiona l'immagine
-        img     = ImageTk.PhotoImage(image)
-        
-        # Imposta l'immagine come icona nella barra in alto
-        icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
-        splash.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
-    except Exception as e:
-        img = None
-        print(f"Errore nel caricamento dell'immagine: {e}")
-
-    # Mostra l'immagine al centro della finestra
-    if img:
-        label_img = tk.Label(splash, image=img)
-        label_img.pack(pady=10)
-
-    # Mostra il titolo sotto l'immagine
-    title_label = tk.Label(splash, text="Registro Comunicazioni Radio", font=("Helvetica", 20, "bold"))
-    title_label.pack(pady=10)
-
-    # Mostra i crediti in basso
-    credit_label = tk.Label(splash, text=f"Created by Jacopo Marzio\nproprieties of {proprieties} V{FW}", font=("Helvetica", 8))
-    credit_label.pack(side="bottom", pady=10)
-
-    # Chiude la finestra dopo 3 secondi
-    splash.after(3000, splash.destroy)  # 3000 millisecondi = 3 secondi
-
-    # Mantieni la finestra in esecuzione
-    splash.mainloop()
-
-def radio_log_interface(login_datetime, communication_log, directory, n_files, logo_path,flag_list, program_title="Radio Communication Log"):
-    """
-    Crea una GUI per il sistema di log radio.
-    """
-    # Definizione delle traduzioni
-    translations = {
-        'en': {
-            "operator": "Operator:",
-            "event": "Event:",
-            "auto_datetime": "Automatic Date/Time",
-            "manual_datetime": "Date/Time (Manual):",
-            "sender": "Sender:",
-            "receiver": "Receiver:",
-            "msg_received": "Message Received:",
-            "msg_sent": "Message Sent:",
-            "add_log": "Add Log",
-            "generate_pdf": "Generate PDF",
-            "operator_error": "Operator name is required!",
-            "event_error": "Event name is required!",
-            "fields_error": "All fields must be filled out!",
-            "error_title": "Error",
-            "warning_title": "Warning",
-            "logo_error": "Could not load logo: {}",
-            "pdf_success": "PDF report generated at {}",
-            "pdf_title": "Radio Communication Log",
-            "listbox_header": "Logs",
-            "xlsx_success": "XLSX report generated at {}",
+    _TRANSLATIONS = {
+        "it": {
+            "title"      : "Modalità di trasmissione",
+            "subtitle"   : "Seleziona come vuoi trasmettere i dati:",
+            "local_btn"  : "📍  Locale",
+            "local_desc" : "Dashboard accessibile solo su questa rete",
+            "remote_btn" : "🌐  Remota (Fly.io)",
+            "remote_desc": "Dashboard accessibile da qualsiasi browser",
         },
-        'it': {
-            "operator": "Operatore:",
-            "event": "Evento:",
-            "auto_datetime": "Data/Ora Automatica",
-            "manual_datetime": "Data/Ora (Manuale):",
-            "sender": "Mittente:",
-            "receiver": "Destinatario:",
-            "msg_received": "Messaggio Ricevuto:",
-            "msg_sent": "Messaggio Inviato:",
-            "add_log": "Aggiungi Log",
-            "generate_pdf": "Genera PDF",
-            "operator_error": "Il nome dell'operatore è obbligatorio!",
-            "event_error": "Il nome dell'evento è obbligatorio!",
-            "fields_error": "Tutti i campi devono essere compilati!",
-            "error_title": "Errore",
-            "warning_title": "Avviso",
-            "logo_error": "Impossibile caricare il logo: {}",
-            "pdf_success": "Rapporto PDF generato in {}",
-            "pdf_title": "Registro Comunicazioni Radio",
-            "listbox_header": "Log",
-            "xlsx_success": "Rapporto XLSX generato in {}"
-        }
+        "en": {
+            "title"      : "Transmission mode",
+            "subtitle"   : "Select how to transmit data:",
+            "local_btn"  : "📍  Local",
+            "local_desc" : "Dashboard accessible on this network only",
+            "remote_btn" : "🌐  Remote (Fly.io)",
+            "remote_desc": "Dashboard accessible from any browser",
+        },
     }
 
-    current_language = 'it'  # Lingua predefinita
+    def __init__(self, logo_path: str = "", lang: str = "it"):
+        self._logo_path = logo_path
+        self._lang      = lang
+        self._result: str = "local"
 
-    def change_language(lang):
-        nonlocal current_language
-        if lang not in translations:
+    def run(self) -> str:
+        """Mostra il dialogo e restituisce 'local' o 'remote'."""
+        self._build()
+        self._root.mainloop()
+        return self._result
+
+    def _build(self) -> None:
+        t    = self._TRANSLATIONS[self._lang]
+        root = tk.Tk()
+        root.title(t["title"])
+        root.geometry("480x280")
+        root.resizable(False, False)
+        root.configure(bg="#0d1520")
+        self._root = root
+
+        try:
+            icon = ImageTk.PhotoImage(
+                Image.open(self._logo_path).resize((32, 32), Image.LANCZOS)
+            )
+            root.iconphoto(False, icon)
+            self._icon = icon
+        except Exception:
+            pass
+
+        tk.Label(
+            root, text=t["title"],
+            font=("Helvetica", 14, "bold"),
+            bg="#0d1520", fg="#00e5ff"
+        ).pack(pady=(22, 4))
+
+        tk.Label(
+            root, text=t["subtitle"],
+            font=("Helvetica", 9),
+            bg="#0d1520", fg="#4a6580"
+        ).pack(pady=(0, 18))
+
+        btn_frame = tk.Frame(root, bg="#0d1520")
+        btn_frame.pack()
+
+        def _make_btn(text, desc, value, accent):
+            col = tk.Frame(btn_frame, bg="#0d1520")
+            col.pack(side="left", padx=18)
+            tk.Button(
+                col, text=text,
+                font=("Helvetica", 11, "bold"),
+                bg="#1a2e44", fg=accent,
+                activebackground=accent, activeforeground="#080c10",
+                relief="flat", bd=0,
+                padx=18, pady=10,
+                cursor="hand2",
+                command=lambda v=value: self._select(v),
+            ).pack()
+            tk.Label(
+                col, text=desc,
+                font=("Helvetica", 7),
+                bg="#0d1520", fg="#4a6580", wraplength=160
+            ).pack(pady=(6, 0))
+
+        _make_btn(t["local_btn"],  t["local_desc"],  "local",  "#39ff14")
+        _make_btn(t["remote_btn"], t["remote_desc"], "remote", "#00e5ff")
+
+    def _select(self, value: str) -> None:
+        self._result = value
+        self._root.destroy()
+
+
+# ======================================================================
+# Main Log Interface
+# ======================================================================
+
+class RadioLogInterface:
+    """
+    Finestra principale dell'applicazione.
+    Gestisce l'inserimento dei log radio, il recovery automatico,
+    la generazione dei report PDF/XLSX e la ricezione di risposte
+    dall'operatore remoto connesso via dashboard WebSocket.
+    """
+
+    _TRANSLATIONS = {
+        "it": {
+            "operator"        : "Operatore:",
+            "event"           : "Evento:",
+            "auto_datetime"   : "Data/Ora Automatica",
+            "manual_datetime" : "Data/Ora (Manuale):",
+            "sender"          : "Mittente:",
+            "receiver"        : "Destinatario:",
+            "msg_received"    : "Messaggio Ricevuto:",
+            "msg_sent"        : "Messaggio Inviato:",
+            "add_log"         : "Aggiungi Log",
+            "generate_pdf"    : "Genera PDF",
+            "operator_error"  : "Il nome dell'operatore è obbligatorio!",
+            "event_error"     : "Il nome dell'evento è obbligatorio!",
+            "fields_error"    : "Tutti i campi devono essere compilati!",
+            "error_title"     : "Errore",
+            "warning_title"   : "Avviso",
+            "logo_error"      : "Impossibile caricare il logo: {}",
+            "pdf_success"     : "Rapporto PDF generato in {}",
+            "pdf_title"       : "Registro Comunicazioni Radio",
+            "listbox_header"  : "Log comunicazioni",
+            "xlsx_success"    : "Rapporto XLSX generato in {}",
+            "connected"       : "Connesso a Internet",
+            "disconnected"    : "Non connesso a Internet",
+            "waiting"         : "Attendo...",
+            "mkdir_error"     : "Impossibile creare la directory: {}",
+            "pdf_gen_error"   : "Errore nella generazione del report: {}",
+            "remote_header"   : "Risposte remote",
+            "dashboard_link"  : "Link dashboard:",
+            "copy_link"       : "Copia link",
+            "link_copied"     : "Link copiato!",
+        },
+        "en": {
+            "operator"        : "Operator:",
+            "event"           : "Event:",
+            "auto_datetime"   : "Automatic Date/Time",
+            "manual_datetime" : "Date/Time (Manual):",
+            "sender"          : "Sender:",
+            "receiver"        : "Receiver:",
+            "msg_received"    : "Message Received:",
+            "msg_sent"        : "Message Sent:",
+            "add_log"         : "Add Log",
+            "generate_pdf"    : "Generate PDF",
+            "operator_error"  : "Operator name is required!",
+            "event_error"     : "Event name is required!",
+            "fields_error"    : "All fields must be filled out!",
+            "error_title"     : "Error",
+            "warning_title"   : "Warning",
+            "logo_error"      : "Could not load logo: {}",
+            "pdf_success"     : "PDF report generated at {}",
+            "pdf_title"       : "Radio Communication Log",
+            "listbox_header"  : "Communication log",
+            "xlsx_success"    : "XLSX report generated at {}",
+            "connected"       : "Connected to Internet",
+            "disconnected"    : "Not connected to Internet",
+            "waiting"         : "Waiting...",
+            "mkdir_error"     : "Cannot create directory: {}",
+            "pdf_gen_error"   : "Error generating report: {}",
+            "remote_header"   : "Remote responses",
+            "dashboard_link"  : "Dashboard link:",
+            "copy_link"       : "Copy link",
+            "link_copied"     : "Link copied!",
+        },
+    }
+
+    LED_REFRESH_MS = 2000
+
+    def __init__(
+        self,
+        login_datetime: str,
+        directory: str,
+        n_files: int,
+        logo_path: str,
+        flag_list: list[str],
+        program_title: str = "Radio Communication Log",
+        dashboard: WebDashboard | None = None,
+    ):
+        self._login_datetime   = login_datetime
+        self._directory        = directory
+        self._n_files          = n_files
+        self._logo_path        = logo_path
+        self._flag_list        = flag_list
+        self._program_title    = program_title
+        self._lang             = "it"
+        self._communication_log: list[tuple] = []
+        self._recovery         = RecoveryManager()
+        self._reporter         = ReportCreator()
+        self._dashboard        = dashboard
+        self._root: tk.Tk | None = None
+
+    # ------------------------------------------------------------------
+    # Public
+    # ------------------------------------------------------------------
+
+    def run(self) -> None:
+        """Costruisce l'interfaccia e avvia il loop Tkinter."""
+        self._build_window()
+        self._load_recovery()
+        self._root.mainloop()
+
+    def handle_remote_response(self, text: str) -> None:
+        """
+        Riceve una risposta dal client remoto (chiamato da thread WebSocket).
+        Usa root.after() per aggiornare la UI in modo thread-safe.
+        """
+        if self._root:
+            self._root.after(0, self._append_remote_response, text)
+
+    # ------------------------------------------------------------------
+    # Window construction
+    # ------------------------------------------------------------------
+
+    def _build_window(self) -> None:
+        root = tk.Tk()
+        root.title(self._program_title)
+        root.geometry("1200x900")
+        root.resizable(True, True)
+        self._root = root
+
+        self._build_top_bar(root)
+        self._build_led(root)
+        self._build_input_frame(root)
+
+        # Pannello principale: log + risposte remote affiancati
+        panels = tk.Frame(root)
+        panels.pack(pady=5, padx=20, fill="both", expand=True)
+        panels.columnconfigure(0, weight=3)
+        panels.columnconfigure(1, weight=1)
+
+        self._build_listbox(panels)
+        self._build_response_panel(panels)
+
+        self._build_dashboard_bar(root)
+        self._build_buttons(root)
+        self._build_flags(root)
+
+    def _build_top_bar(self, parent: tk.Widget) -> None:
+        frame = tk.Frame(parent)
+        frame.pack(pady=10)
+
+        if os.path.exists(self._logo_path):
+            try:
+                logo_img = self._load_image(self._logo_path, 100, 100)
+                icon_img = self._load_image(self._logo_path, 32, 32)
+                lbl_logo = tk.Label(frame, image=logo_img)
+                lbl_logo.image = logo_img
+                lbl_logo.pack(side="left", padx=10)
+                self._root.iconphoto(False, icon_img)
+            except Exception as e:
+                print(self._t()["logo_error"].format(e))
+
+        self._title_label = tk.Label(
+            frame,
+            text=self._t()["pdf_title"],
+            font=("Helvetica", 16, "bold")
+        )
+        self._title_label.pack(side="left", padx=10)
+
+    def _build_led(self, parent: tk.Widget) -> None:
+        frame = tk.Frame(parent)
+        frame.pack(fill="x", pady=5)
+
+        canvas = tk.Canvas(frame, width=50, height=60)
+        canvas.pack(side="left", padx=10)
+        self._led    = canvas.create_oval(15, 15, 40, 40, fill="red")
+        self._canvas = canvas
+
+        self._lbl_status = tk.Label(frame, text=self._t()["waiting"], font=("Helvetica", 10))
+        self._lbl_status.pack(side="left", padx=10)
+
+        self._refresh_led()
+
+    def _build_input_frame(self, parent: tk.Widget) -> None:
+        t = self._t()
+        frame = tk.Frame(parent)
+        frame.pack(pady=10, padx=20, fill="x")
+        frame.grid_columnconfigure(1, weight=1)
+        self._input_frame = frame
+        self._labels: dict[str, tk.Widget] = {}
+
+        def _row(key: str, row: int) -> ttk.Entry:
+            lbl = tk.Label(frame, text=t[key])
+            lbl.grid(row=row, column=0, sticky="e", pady=5, padx=5)
+            self._labels[key] = lbl
+            entry = ttk.Entry(frame)
+            entry.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
+            return entry
+
+        self._entry_operator     = _row("operator", 0)
+        self._entry_event        = _row("event", 1)
+
+        self._var_auto_dt = tk.BooleanVar(value=True)
+        chk = ttk.Checkbutton(
+            frame, text=t["auto_datetime"],
+            variable=self._var_auto_dt, command=self._toggle_manual_dt
+        )
+        chk.grid(row=2, column=0, columnspan=2, sticky="w", pady=5, padx=5)
+        self._labels["auto_datetime"] = chk
+
+        self._entry_manual_dt    = _row("manual_datetime", 3)
+        self._entry_manual_dt.config(state="disabled")
+        self._entry_sender       = _row("sender", 4)
+        self._entry_receiver     = _row("receiver", 5)
+        self._entry_msg_received = _row("msg_received", 6)
+        self._entry_msg_sent     = _row("msg_sent", 7)
+
+    def _build_listbox(self, parent: tk.Widget) -> None:
+        """Pannello sinistro: log comunicazioni."""
+        frame = tk.Frame(parent)
+        frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        self._listbox_label = tk.Label(
+            frame, text=self._t()["listbox_header"], font=("Helvetica", 12, "bold")
+        )
+        self._listbox_label.pack(anchor="w")
+
+        self._listbox = tk.Listbox(frame, width=80, height=10)
+        self._listbox.pack(fill="both", expand=True, pady=5)
+
+    def _build_response_panel(self, parent: tk.Widget) -> None:
+        """
+        Pannello destro: risposte in arrivo dal client remoto.
+        Ogni risposta viene appesa con timestamp.
+        """
+        frame = tk.Frame(parent, bd=1, relief="sunken")
+        frame.grid(row=0, column=1, sticky="nsew")
+
+        self._response_label = tk.Label(
+            frame, text=self._t()["remote_header"],
+            font=("Helvetica", 12, "bold")
+        )
+        self._response_label.pack(anchor="w", padx=5, pady=(5, 0))
+
+        self._response_listbox = tk.Listbox(
+            frame, width=35, height=10,
+            bg="#1a1a2e", fg="#00e5ff",
+            selectbackground="#0d3b66",
+            font=("Courier", 9)
+        )
+        self._response_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def _build_dashboard_bar(self, parent: tk.Widget) -> None:
+        """
+        Barra informativa con il link della dashboard da condividere
+        e pulsante copia-negli-appunti.
+        """
+        if not self._dashboard:
             return
-        current_language    = lang
-        texts               = translations[lang]
-        # Aggiorna i testi dei label
-        labels["operator"].config(text=texts["operator"])
-        labels["event"].config(text=texts["event"])
-        labels["auto_datetime"].config(text=texts["auto_datetime"])
-        labels["manual_datetime"].config(text=texts["manual_datetime"])
-        labels["sender"].config(text=texts["sender"])
-        labels["receiver"].config(text=texts["receiver"])
-        labels["msg_received"].config(text=texts["msg_received"])
-        labels["msg_sent"].config(text=texts["msg_sent"])
-        btn_add_log.config(text=texts["add_log"])
-        btn_generate_pdf.config(text=texts["generate_pdf"])
-        title_label.config(text=texts["pdf_title"])
-        listbox_label.config(text=texts["listbox_header"])
-        root.title(texts["pdf_title"])
 
-    def add_log():
-        if var_auto_datetime.get():
-            date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            date_time = entry_manual_datetime.get()
+        frame = tk.Frame(parent, bd=1, relief="groove")
+        frame.pack(fill="x", padx=20, pady=(0, 5))
 
-        sender          = entry_sender.get()
-        receiver        = entry_receiver.get()
-        msg_received    = entry_msg_received.get()
-        msg_sent        = entry_msg_sent.get()
+        tk.Label(
+            frame, text=self._t()["dashboard_link"],
+            font=("Helvetica", 9, "bold")
+        ).pack(side="left", padx=(8, 4))
 
-        if not (date_time and sender and receiver and msg_received and msg_sent):
-            messagebox.showerror(translations[current_language]["error_title"], translations[current_language]["fields_error"])
+        self._lbl_link = tk.Label(
+            frame, text=self._dashboard.link,
+            font=("Courier", 9), fg="#0066cc",
+            cursor="hand2"
+        )
+        self._lbl_link.pack(side="left", padx=4)
+
+        self._lbl_copied = tk.Label(frame, text="", font=("Helvetica", 8), fg="green")
+        self._lbl_copied.pack(side="right", padx=8)
+
+        tk.Button(
+            frame, text=self._t()["copy_link"],
+            command=self._copy_dashboard_link, font=("Helvetica", 8)
+        ).pack(side="right", padx=4, pady=3)
+
+    def _build_buttons(self, parent: tk.Widget) -> None:
+        t = self._t()
+        frame = tk.Frame(parent)
+        frame.pack(pady=10)
+
+        self._btn_add_log = tk.Button(frame, text=t["add_log"], command=self._add_log)
+        self._btn_add_log.grid(row=0, column=0, padx=10)
+
+        self._btn_gen_pdf = tk.Button(frame, text=t["generate_pdf"], command=self._generate_reports)
+        self._btn_gen_pdf.grid(row=0, column=1, padx=10)
+
+    def _build_flags(self, parent: tk.Widget) -> None:
+        frame = tk.Frame(parent)
+        frame.pack(pady=5)
+        try:
+            flag_it = self._load_image(self._flag_list[0], 50, 30)
+            flag_en = self._load_image(self._flag_list[1], 50, 30)
+            btn_it  = tk.Button(frame, image=flag_it, command=lambda: self._change_language("it"))
+            btn_en  = tk.Button(frame, image=flag_en, command=lambda: self._change_language("en"))
+            btn_it.image = flag_it
+            btn_en.image = flag_en
+            btn_it.pack(side="left", padx=10)
+            btn_en.pack(side="left", padx=10)
+        except Exception as e:
+            messagebox.showwarning(self._t()["warning_title"], self._t()["logo_error"].format(e))
+
+    # ------------------------------------------------------------------
+    # Callbacks
+    # ------------------------------------------------------------------
+
+    def _add_log(self) -> None:
+        t = self._t()
+        date_time = (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if self._var_auto_dt.get()
+            else self._entry_manual_dt.get()
+        )
+        sender       = self._entry_sender.get()
+        receiver     = self._entry_receiver.get()
+        msg_received = self._entry_msg_received.get()
+        msg_sent     = self._entry_msg_sent.get()
+
+        if not all([date_time, sender, receiver, msg_received, msg_sent]):
+            messagebox.showerror(t["error_title"], t["fields_error"])
             return
 
-        # Aggiungi il log alla listbox
-        log_entry = f"{date_time} - {sender} -> {receiver} : {msg_received} | {msg_sent}"
-        recovery_sheet(date_time, sender, receiver, msg_received, msg_sent)  # Salva nel file di recovery
-        listbox_logs.insert(tk.END, log_entry)
+        entry = (date_time, sender, receiver, msg_received, msg_sent)
+        self._communication_log.append(entry)
+        self._recovery.append(*entry)
 
-        # Salva il log nella lista interna
-        communication_log.append((date_time, sender, receiver, msg_received, msg_sent))
+        if self._dashboard:
+            self._dashboard.push_entry(entry)
 
-        # Resetta i campi
-        if not var_auto_datetime.get():
-            entry_manual_datetime.delete(0, tk.END)
-        entry_sender.delete(0, tk.END)
-        entry_receiver.delete(0, tk.END)
-        entry_msg_received.delete(0, tk.END)
-        entry_msg_sent.delete(0, tk.END)
-        
+        self._listbox.insert(
+            tk.END,
+            f"{date_time} - {sender} → {receiver} : {msg_received} | {msg_sent}"
+        )
 
+        # Reset campi
+        if not self._var_auto_dt.get():
+            self._entry_manual_dt.delete(0, tk.END)
+        for e in (self._entry_sender, self._entry_receiver,
+                  self._entry_msg_received, self._entry_msg_sent):
+            e.delete(0, tk.END)
 
-    def generate_pdf():
-        operator    = entry_operator.get()
-        event       = entry_event.get()
+    def _generate_reports(self) -> None:
+        t        = self._t()
+        operator = self._entry_operator.get()
+        event    = self._entry_event.get()
+
         if not operator:
-            messagebox.showerror(translations[current_language]["error_title"], translations[current_language]["operator_error"])
+            messagebox.showerror(t["error_title"], t["operator_error"])
             return
         if not event:
-            messagebox.showerror(translations[current_language]["error_title"], translations[current_language]["event_error"])
+            messagebox.showerror(t["error_title"], t["event_error"])
             return
 
-        if not os.path.exists(directory):
+        if not os.path.exists(self._directory):
             try:
-                os.makedirs(directory)
+                os.makedirs(self._directory)
             except Exception as e:
-                messagebox.showerror(translations[current_language]["error_title"], f"Impossibile creare la directory: {e}")
+                messagebox.showerror(t["error_title"], t["mkdir_error"].format(e))
                 return
 
-        # Conta i PDF presenti nella directory
-        n_files         = count_pdfs_in_directory(directory)
-        xlsx_files      = count_xlsx_in_directory(directory)
-
-        # Crea il report PDF
         try:
-            create_xlsx_report(operator, event, login_datetime, communication_log, directory, xlsx_files, logo_path)
-            create_pdf_report(operator, event, login_datetime, communication_log, directory, n_files, logo_path)
-            messagebox.showinfo("Success", translations[current_language]["pdf_success"].format(directory))
-            messagebox.showinfo("Success", translations[current_language]["xlsx_success"].format(directory))
-        except Exception as e:
-            messagebox.showerror(translations[current_language]["error_title"], f"Errore nella generazione del PDF: {e}")
-            
+            n_pdf  = self._reporter.count_files(self._directory, ".pdf")
+            n_xlsx = self._reporter.count_files(self._directory, ".xlsx")
 
-    def toggle_manual_datetime():
-        if var_auto_datetime.get():
-            entry_manual_datetime.config(state='disabled')
+            pdf_path  = self._reporter.create_pdf(
+                operator, event, self._login_datetime,
+                self._communication_log, self._directory, n_pdf, self._logo_path
+            )
+            xlsx_path = self._reporter.create_xlsx(
+                operator, event, self._login_datetime,
+                self._communication_log, self._directory, n_xlsx, self._logo_path
+            )
+            messagebox.showinfo("Success", t["pdf_success"].format(pdf_path))
+            messagebox.showinfo("Success", t["xlsx_success"].format(xlsx_path))
+        except Exception as e:
+            messagebox.showerror(t["error_title"], t["pdf_gen_error"].format(e))
+
+    def _toggle_manual_dt(self) -> None:
+        state = "disabled" if self._var_auto_dt.get() else "normal"
+        self._entry_manual_dt.config(state=state)
+
+    def _change_language(self, lang: str) -> None:
+        self._lang = lang
+        t = self._t()
+        self._root.title(t["pdf_title"])
+        self._title_label.config(text=t["pdf_title"])
+        self._listbox_label.config(text=t["listbox_header"])
+        self._response_label.config(text=t["remote_header"])
+        self._btn_add_log.config(text=t["add_log"])
+        self._btn_gen_pdf.config(text=t["generate_pdf"])
+        for key in ("operator", "event", "manual_datetime",
+                    "sender", "receiver", "msg_received", "msg_sent"):
+            self._labels[key].config(text=t[key])
+        self._labels["auto_datetime"].config(text=t["auto_datetime"])
+
+    def _refresh_led(self) -> None:
+        t = self._t()
+        if ConnectionChecker.is_connected():
+            self._canvas.itemconfig(self._led, fill="green")
+            self._lbl_status.config(text=t["connected"])
         else:
-            entry_manual_datetime.config(state='normal')
+            self._canvas.itemconfig(self._led, fill="red")
+            self._lbl_status.config(text=t["disconnected"])
+        self._root.after(self.LED_REFRESH_MS, self._refresh_led)
 
-    def resize_image(image_path, width, height):
-        try:
-            image = Image.open(image_path)
-            resized_image = image.resize((width, height), Image.LANCZOS)
-            return ImageTk.PhotoImage(resized_image)
-        except Exception as e:
-            messagebox.showwarning(translations[current_language]["warning_title"], translations[current_language]["logo_error"].format(e))
-            return None
+    def _copy_dashboard_link(self) -> None:
+        """Copia il link della dashboard negli appunti e mostra conferma."""
+        if not self._dashboard:
+            return
+        self._root.clipboard_clear()
+        self._root.clipboard_append(self._dashboard.link)
+        self._lbl_copied.config(text=self._t()["link_copied"])
+        self._root.after(2000, lambda: self._lbl_copied.config(text=""))
 
-    # Inizializza la finestra Tkinter
-    
-  
-            
-    root = tk.Tk()
-    root.title(program_title)
-    root.geometry("1200x800")
-    root.resizable(True, True)
+    def _append_remote_response(self, text: str) -> None:
+        """
+        Aggiunge una risposta remota al pannello (eseguito nel thread Tkinter).
+        Chiamato esclusivamente tramite root.after() da handle_remote_response.
+        """
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._response_listbox.insert(tk.END, f"[{timestamp}] {text}")
+        self._response_listbox.see(tk.END)
 
-    # Titolo e logo
-    top_frame = tk.Frame(root)
-    top_frame.pack(pady=10)
+    def _load_recovery(self) -> None:
+        """
+        Carica l'eventuale sessione di recovery e ripristina i log.
+        Le voci ripristinate vengono anche inviate alla dashboard remota.
+        """
+        recovered = self._recovery.load_latest()
+        if not recovered:
+            return
+        for log in recovered:
+            self._communication_log.append(log)
+            self._listbox.insert(
+                tk.END,
+                f"{log[0]} - {log[1]} → {log[2]} : {log[3]} | {log[4]}"
+            )
+            if self._dashboard:
+                self._dashboard.push_entry(log)
 
-    if os.path.exists(logo_path):
-        logo_img = resize_image(logo_path, 100, 100)
-        if logo_img:
-            logo_label = tk.Label(top_frame, image=logo_img)
-            logo_label.image = logo_img  # Mantiene il riferimento all'immagine
-            logo_label.pack(side='left', padx=10)
-            
-            # Imposta l'immagine come icona nella barra in alto
-            icon_image = ImageTk.PhotoImage(Image.open(logo_path).resize((32, 32), Image.LANCZOS))  # Ridimensiona l'icona
-            root.iconphoto(False, icon_image)  # Imposta l'icona nella barra del titolo
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-    title_label = tk.Label(top_frame, text=program_title, font=("Helvetica", 20))
-    title_label.pack(side='left')
-    
-    # Frame per LED e stato
-    led_frame = tk.Frame(root)
-    led_frame.pack(fill="x", pady=5)
- 
-    # Imposta un LED che verifichi la connessione a internet:
-    def update_led():
-       if check_connection():
-         canvas.itemconfig(led, fill="green")
-         lbl_status.config(text="Connesso a Internet", fg="black")
-       else:
-         canvas.itemconfig(led, fill="red")
-         lbl_status.config(text="Non connesso a Internet", fg="black")
-     
-       root.after(2000, update_led)
- 
-    # Canvas per il LED
-    canvas = tk.Canvas(led_frame, width=50, height=60)
-    canvas.pack(side="left", padx=10)
-    led = canvas.create_oval(15, 15, 40, 40, fill="red")
- 
-    # Etichetta per lo stato della connessione
-    lbl_status = tk.Label(led_frame, text="Attendo...", font=("Helvetica", 10))
-    lbl_status.pack(side="left", padx=10)
- 
-    update_led()
+    def _t(self) -> dict:
+        return self._TRANSLATIONS[self._lang]
 
-    # Frame per i campi di input
-    input_frame = tk.Frame(root)
-    input_frame.pack(pady=10, padx=20, fill="x")
-
-    labels = {}
-
-    # Operatore
-    labels["operator"] = tk.Label(input_frame, text=translations[current_language]["operator"])
-    labels["operator"].grid(row=0, column=0, sticky="e", pady=5, padx=5)
-    entry_operator = tk.Entry(input_frame)
-    entry_operator.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
-
-    # Evento
-    labels["event"] = tk.Label(input_frame, text=translations[current_language]["event"])
-    labels["event"].grid(row=1, column=0, sticky="e", pady=5, padx=5)
-    entry_event = tk.Entry(input_frame)
-    entry_event.grid(row=1, column=1, sticky="ew", pady=5, padx=5)
-
-    # Opzione per Data/Ora Automatica
-    var_auto_datetime = tk.BooleanVar(value=True)
-    labels["auto_datetime"] = ttk.Checkbutton(
-        input_frame, 
-        text=translations[current_language]["auto_datetime"], 
-        variable=var_auto_datetime, 
-        command=toggle_manual_datetime
-    )
-    labels["auto_datetime"].grid(row=2, column=0, columnspan=2, sticky="w", pady=5, padx=5)
-
-    # Data/Ora Manuale
-    labels["manual_datetime"] = tk.Label(input_frame, text=translations[current_language]["manual_datetime"])
-    labels["manual_datetime"].grid(row=3, column=0, sticky="e", pady=5, padx=5)
-    entry_manual_datetime = tk.Entry(input_frame)
-    entry_manual_datetime.grid(row=3, column=1, sticky="ew", pady=5, padx=5)
-    entry_manual_datetime.config(state='disabled')
-
-    # Mittente
-    labels["sender"] = tk.Label(input_frame, text=translations[current_language]["sender"])
-    labels["sender"].grid(row=4, column=0, sticky="e", pady=5, padx=5)
-    entry_sender = tk.Entry(input_frame)
-    entry_sender.grid(row=4, column=1, sticky="ew", pady=5, padx=5)
-
-    # Destinatario
-    labels["receiver"] = tk.Label(input_frame, text=translations[current_language]["receiver"])
-    labels["receiver"].grid(row=5, column=0, sticky="e", pady=5, padx=5)
-    entry_receiver = tk.Entry(input_frame)
-    entry_receiver.grid(row=5, column=1, sticky="ew", pady=5, padx=5)
-
-    # Messaggio Ricevuto
-    labels["msg_received"] = tk.Label(input_frame, text=translations[current_language]["msg_received"])
-    labels["msg_received"].grid(row=6, column=0, sticky="e", pady=5, padx=5)
-    entry_msg_received = tk.Entry(input_frame)
-    entry_msg_received.grid(row=6, column=1, sticky="ew", pady=5, padx=5)
-
-    # Messaggio Inviato
-    labels["msg_sent"] = tk.Label(input_frame, text=translations[current_language]["msg_sent"])
-    labels["msg_sent"].grid(row=7, column=0, sticky="e", pady=5, padx=5)
-    entry_msg_sent = tk.Entry(input_frame)
-    entry_msg_sent.grid(row=7, column=1, sticky="ew", pady=5, padx=5)
-
-    # Configura le colonne per espandersi
-    input_frame.grid_columnconfigure(1, weight=1)
-
-    # Listbox per visualizzare i log
-    listbox_frame = tk.Frame(root)
-    listbox_frame.pack(pady=10, padx=20, fill="both", expand=True)
-
-    listbox_label = tk.Label(listbox_frame, text=translations[current_language]["listbox_header"], font=("Helvetica", 14))
-    listbox_label.pack(anchor='w')
-
-    listbox_logs = tk.Listbox(listbox_frame, width=80, height=10)
-    listbox_logs.pack(fill="both", expand=True, pady=5)
-
-    # Bottoni per aggiungere log e generare PDF
-    button_frame = tk.Frame(root)
-    button_frame.pack(pady=10)
-
-    btn_add_log = tk.Button(button_frame, text=translations[current_language]["add_log"], command=add_log)
-    btn_add_log.grid(row=0, column=0, padx=10)
-
-    btn_generate_pdf = tk.Button(button_frame, text=translations[current_language]["generate_pdf"], command=generate_pdf)
-    btn_generate_pdf.grid(row=0, column=1, padx=10)
-
-    # Sezione per la selezione della lingua
-    language_frame = tk.Frame(root)
-    language_frame.pack(pady=10)
-
-    def resize_image(image_path, width, height):
-        try:
-            image = Image.open(image_path)
-            resized_image = image.resize((width, height), Image.LANCZOS)
-            return ImageTk.PhotoImage(resized_image)
-        except Exception as e:
-            messagebox.showwarning(translations[current_language]["warning_title"], translations[current_language]["logo_error"].format(e))
-            return None
-
-    # Carica e ridimensiona le immagini delle bandiere
-    flag_en = resize_image(flag_list[1], 50, 30)
-    flag_it = resize_image(flag_list[0], 50, 30)
-    
-  
-
-    # Bottoni per cambiare lingua
-    if flag_en:
-        btn_en          = tk.Button(language_frame, image=flag_en, command=lambda: change_language('en'))
-        btn_en.image    = flag_en  # Mantiene un riferimento all'immagine
-        btn_en.pack(side='left', padx=10)
-    if flag_it:
-        btn_it          = tk.Button(language_frame, image=flag_it, command=lambda: change_language('it'))
-        btn_it.image    = flag_it  # Mantiene un riferimento all'immagine
-        btn_it.pack(side='left', padx=10)
-
-    # Etichetta del titolo della listbox
-    listbox_label.config(text=translations[current_language]["listbox_header"])
-    
-    # Prima di iniziare, controlla se esistono file di recovery
-    recovered_logs = load_recovery_file(os.getcwd())
-    if recovered_logs:
-        for log in recovered_logs:
-            # Carica ogni log nella listbox e nella lista interna communication_log
-            log_entry = f"{log[0]} - {log[1]} -> {log[2]} : {log[3]} | {log[4]}"
-            listbox_logs.insert(tk.END, log_entry)
-            communication_log.append(log)
-
-    # Avvia la finestra Tkinter
-    root.mainloop()
+    @staticmethod
+    def _load_image(path: str, w: int, h: int) -> ImageTk.PhotoImage:
+        return ImageTk.PhotoImage(Image.open(path).resize((w, h), Image.LANCZOS))
