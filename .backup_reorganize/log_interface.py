@@ -396,7 +396,11 @@ class RadioLogInterface:
         self._entry_msg_sent     = _row("msg_sent", 7)
 
     def _build_listbox(self, parent: tk.Widget) -> None:
-        """Pannello sinistro: log comunicazioni."""
+        """
+        Pannello sinistro: log comunicazioni.
+        Le frecce Su/Giù spostano la selezione anche quando il focus
+        è altrove (es. nei campi di input).
+        """
         frame = tk.Frame(parent)
         frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
@@ -407,6 +411,11 @@ class RadioLogInterface:
 
         self._listbox = tk.Listbox(frame, width=80, height=10)
         self._listbox.pack(fill="both", expand=True, pady=5)
+
+        # Binding globale sulla finestra: frecce spostano il cursore nel listbox
+        # indipendentemente da dove sia il focus in quel momento.
+        self._root.bind("<Up>",   self._listbox_move_up)
+        self._root.bind("<Down>", self._listbox_move_down)
 
     def _build_response_panel(self, parent: tk.Widget) -> None:
         """
@@ -628,6 +637,31 @@ class RadioLogInterface:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _listbox_move_up(self, event=None) -> str:
+        """Sposta la selezione del listbox di una riga verso l'alto."""
+        sel = self._listbox.curselection()
+        if sel:
+            idx = max(0, sel[0] - 1)
+        else:
+            idx = self._listbox.size() - 1
+        self._listbox.selection_clear(0, tk.END)
+        self._listbox.selection_set(idx)
+        self._listbox.see(idx)
+        return "break"   # impedisce che la freccia sposti anche il cursore del campo attivo
+
+    def _listbox_move_down(self, event=None) -> str:
+        """Sposta la selezione del listbox di una riga verso il basso."""
+        sel = self._listbox.curselection()
+        last = self._listbox.size() - 1
+        if sel:
+            idx = min(last, sel[0] + 1)
+        else:
+            idx = 0
+        self._listbox.selection_clear(0, tk.END)
+        self._listbox.selection_set(idx)
+        self._listbox.see(idx)
+        return "break"
 
     def _t(self) -> dict:
         return self._TRANSLATIONS[self._lang]

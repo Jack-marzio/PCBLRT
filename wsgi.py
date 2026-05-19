@@ -16,6 +16,9 @@ Fly.io usa il CMD del Dockerfile che punta qui.
 import os
 import secrets
 
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), 'app'))
+
 from web_dashboard import WebDashboard
 
 # ── Inizializzazione dashboard ────────────────────────────────────────────

@@ -1,0 +1,13 @@
+Program_title=Registro delle comunicazioni radio
+Firmware_version=6.0
+Drive_path=G:\Il mio Drive\TLC\LOG  RADIO
+Logo_path= img\logo_besozzo.png
+Flags_logo=[img\it.png, img\uk.png]
+Proprieties=G.C. BESOZZO
+Remote_enabled = true
+
+
+# ── Deploy info (aggiornato automaticamente da deploy.py) ──
+FLY_APP_NAME = radiolog-g-c-besozzo
+WS_PUBLIC_URL = https://radiolog-g-c-besozzo.fly.dev?token=UhXPEW3jVqa054k3ALEyadJJM-BUVqntf-DTMiPNk98
+WS_TOKEN = UhXPEW3jVqa054k3ALEyadJJM-BUVqntf-DTMiPNk98
