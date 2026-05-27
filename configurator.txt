@@ -1,13 +1,18 @@
 Program_title=Registro delle comunicazioni radio
 Firmware_version=6.0
 Drive_path=G:\Il mio Drive\TLC\LOG  RADIO
-Logo_path= assets\logo_besozzo.png
+Logo_path= assets\logo_provincia.png
 Flags_logo=[assets\it.png, assets\uk.png]
-Proprieties=G.C. BESOZZO
+Proprieties=MODULO TLC VARESE
 Remote_enabled = true
+WS_TOKEN = radiolog-tlcvarese-2026
 
-
-# ── Deploy info (aggiornato automaticamente da deploy.py) ──
-FLY_APP_NAME = radiolog-g-c-besozzo
-WS_PUBLIC_URL = https://radiolog-g-c-besozzo.fly.dev?token=UhXPEW3jVqa054k3ALEyadJJM-BUVqntf-DTMiPNk98
-WS_TOKEN = UhXPEW3jVqa054k3ALEyadJJM-BUVqntf-DTMiPNk98
+# ── Firebase ────────────────────────────────────────────────────────
+Firebase_credentials    = firebase_credentials.json
+Firebase_database_url   = https://tlcvarese-default-rtdb.europe-west1.firebasedatabase.app
+Firebase_web_api_key    = AIzaSyAdXZnj4oU-w618H-u-uq4gOkfy6VZf89Y
+Firebase_auth_domain    = tlcvarese.firebaseapp.com
+Firebase_project_id     = tlcvarese
+Firebase_storage_bucket = tlcvarese.firebasestorage.app
+Firebase_messaging_id   = 1070346759225
+Firebase_app_id         = 1:1070346759225:web:7bc117bd50297e1274f1e8

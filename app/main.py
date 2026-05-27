@@ -24,35 +24,41 @@ from pathlib import Path
 
 def _base_path() -> Path:
     """
-    Restituisce la cartella base per le risorse:
-    - In esecuzione normale: cartella di main.py
-    - In eseguibile PyInstaller (--onefile): sys._MEIPASS (cartella temporanea di estrazione)
+    Restituisce la cartella ROOT del progetto (dove si trova configurator.txt).
+
+    Casi gestiti:
+    - Eseguibile PyInstaller (--onefile): sys._MEIPASS
+    - main.py in root del progetto (struttura piatta): cartella di main.py
+    - main.py in app/ (dopo reorganize.py): cartella genitore di app/
     """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
-    return Path(__file__).parent.resolve()
+
+    here = Path(__file__).parent.resolve()
+
+    # Se siamo dentro app/, risali alla root del progetto
+    if here.name == "app":
+        return here.parent
+
+    return here
 
 BASE = _base_path()
 
 # ── sys.path: aggiunge app/ per gli import dei moduli locali ─────────────────
-# Necessario sia in sviluppo (dopo reorganize.py) che nell'exe (PyInstaller
-# estrae tutto in _MEIPASS ma i moduli di app/ vanno cercati esplicitamente).
-
 _app_dir = BASE / "app"
-if str(_app_dir) not in sys.path:
+if _app_dir.exists() and str(_app_dir) not in sys.path:
     sys.path.insert(0, str(_app_dir))
 
-# Fallback: se app/ non esiste (struttura piatta pre-reorganize) usa BASE
-if not _app_dir.exists():
-    if str(BASE) not in sys.path:
-        sys.path.insert(0, str(BASE))
+# Fallback struttura piatta (pre-reorganize)
+if not _app_dir.exists() and str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
 
 
 # ── Import moduli locali (dopo sys.path setup) ────────────────────────────────
 
 from config_manager import ConfigManager                    # noqa: E402
 from directory_selector import DirectorySelector            # noqa: E402
-from log_interface import RadioLogInterface, ModeSelector, SplashScreen  # noqa: E402
+from log_interface import RadioLogInterface, SplashScreen  # noqa: E402
 from report_creator import ReportCreator                    # noqa: E402
 from web_dashboard import WebDashboard                      # noqa: E402
 
@@ -136,42 +142,46 @@ class Application:
         logo_path = _resolve_asset(cfg["Logo_path"])
         flag_list = _resolve_flag_list(cfg["Flags_logo"])
 
-        # ── Remote enabled flag ──────────────────────────────────────
-        remote_enabled = cfg.get("Remote_enabled", "false").strip().lower() == "true"
+        # ── Token sessione ───────────────────────────────────────────
+        # Usato come session_id della dashboard. Se fisso nel configurator
+        # il link non cambia mai tra un riavvio e l'altro.
+        token = cfg.get("WS_TOKEN") or secrets.token_urlsafe(32)
 
-        # ── Token e host pubblico ────────────────────────────────────
-        token = cfg.get("WS_TOKEN") or os.environ.get("WS_TOKEN")
-        if not token:
-            token = secrets.token_urlsafe(32)
-            print(
-                f"\n  ⚠️   WS_TOKEN non trovato — token di sessione generato: {token}\n"
-                f"      Per uso stabile: python deploy/deploy.py deploy <org>\n"
-            )
+        # ── Remote enabled ───────────────────────────────────────────
+        # Se true e Firebase è configurato → dashboard accessibile da browser.
+        # Se false → WebDashboard non viene avviata.
+        remote_enabled   = cfg.get("Remote_enabled", "false").strip().lower() == "true"
+        firebase_cred    = _resolve_asset(cfg.get("Firebase_credentials", "firebase_credentials.json"))
+        firebase_db_url  = cfg.get("Firebase_database_url", "")
+        firebase_enabled = remote_enabled and bool(firebase_db_url)
 
-        fly_app         = cfg.get("FLY_APP_NAME") or os.environ.get("FLY_APP_NAME")
-        configured_host = f"{fly_app}.fly.dev" if fly_app else None
-
-        # ── Selezione modalità a runtime ─────────────────────────────
-        public_host = None
-        if remote_enabled and configured_host:
-            mode        = ModeSelector(logo_path=logo_path, lang="it").run()
-            public_host = configured_host if mode == "remote" else None
-        elif remote_enabled and not configured_host:
-            print(
-                "  ⚠️   Remote_enabled = true ma FLY_APP_NAME non configurato.\n"
-                "      Esegui: python deploy/deploy.py deploy <org>\n"
-            )
+        firebase_web_cfg = {
+            "apiKey"           : cfg.get("Firebase_web_api_key",    ""),
+            "authDomain"       : cfg.get("Firebase_auth_domain",    ""),
+            "databaseURL"      : firebase_db_url,
+            "projectId"        : cfg.get("Firebase_project_id",     ""),
+            "storageBucket"    : cfg.get("Firebase_storage_bucket", ""),
+            "messagingSenderId": cfg.get("Firebase_messaging_id",   ""),
+            "appId"            : cfg.get("Firebase_app_id",         ""),
+        }
 
         # 1. Splash screen
         SplashScreen(firmware, logo_path, proprieties).show()
 
-        # 2. Dashboard WebSocket (thread daemon)
-        dashboard = WebDashboard(
-            port=web_port,
-            token=token,
-            public_host=public_host,
-        )
-        dashboard.start()
+        # 2. Dashboard Firebase (solo se Remote_enabled = true e Firebase configurato)
+        dashboard = None
+        if firebase_enabled:
+            dashboard = WebDashboard(
+                firebase_cred       = firebase_cred,
+                firebase_db_url     = firebase_db_url,
+                firebase_web_config = firebase_web_cfg,
+                token               = token,
+                port                = web_port,
+            )
+            dashboard.start()
+        else:
+            if remote_enabled:
+                print("  ⚠️   Remote_enabled = true ma Firebase_database_url non configurato.")
 
         # 3. Selezione directory di salvataggio
         directory = DirectorySelector(logo_path, flag_list, drive_path).run()
@@ -184,13 +194,13 @@ class Application:
 
         # 5. Interfaccia principale
         interface = RadioLogInterface(
-            login_datetime=login_dt,
-            directory=directory,
-            n_files=n_protocol,
-            logo_path=logo_path,
-            flag_list=flag_list,
-            program_title=program_title,
-            dashboard=dashboard,
+            login_datetime = login_dt,
+            directory      = directory,
+            n_files        = n_protocol,
+            logo_path      = logo_path,
+            flag_list      = flag_list,
+            program_title  = program_title,
+            dashboard      = dashboard,  # None se remote_enabled = false
         )
 
         # 6. Wiring bidirezionale
