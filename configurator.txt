@@ -6,6 +6,3 @@ Flags_logo=[assets\it.png, assets\uk.png]
 Proprieties=MODULO TLC VARESE
 Remote_enabled=true
 WS_TOKEN=radiolog-tlcvarese-2026
-Firebase_database_url=https://tlcvarese-default-rtdb.europe-west1.firebasedatabase.app
-Firebase_api_key=AIzaSyAdXZnj4oU-w618H-u-uq4gOkfy6VZf89Y
-Firebase_project_id=tlcvarese
