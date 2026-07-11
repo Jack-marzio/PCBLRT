@@ -20,8 +20,8 @@ VSVersionInfo(
             StringStruct('FileVersion', '6.0.0'),
             StringStruct('InternalName', 'PCBRLT'),
             StringStruct('LegalCopyright', '© 2026 JacopoMarzio'),
-            StringStruct('OriginalFilename', 'PCBRLT.exe'),
-            StringStruct('ProductName', 'PCBRLT'),
+            StringStruct('OriginalFilename', 'Registro_comunicazioni_radio.exe'),
+            StringStruct('ProductName', 'Brogliaccio_comunicazioni_radio'),
             StringStruct('ProductVersion', '6.0.0')
           ]
         )

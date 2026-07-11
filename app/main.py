@@ -5,8 +5,8 @@ Entry point dell'applicazione Radio Communication Log.
 Coordina le componenti tramite la classe Application.
 
 Variabili d'ambiente riconosciute:
-  WS_TOKEN      — token segreto per la dashboard remota (obbligatorio in produzione)
-  FLY_APP_NAME  — impostato automaticamente da Fly.io; costruisce l'URL pubblico
+  WS_TOKEN — token/session_id fisso per la dashboard locale (opzionale;
+             se assente ne viene generato uno nuovo ad ogni avvio).
 
 Compatibile con PyInstaller (--onefile e --windowed):
   I path delle risorse vengono risolti rispetto a sys._MEIPASS quando
@@ -147,41 +147,23 @@ class Application:
         # il link non cambia mai tra un riavvio e l'altro.
         token = cfg.get("WS_TOKEN") or secrets.token_urlsafe(32)
 
-        # ── Remote enabled ───────────────────────────────────────────
-        # Se true e Firebase è configurato → dashboard accessibile da browser.
+        # ── Dashboard locale ─────────────────────────────────────────
+        # Se true → dashboard web disponibile via browser sulla rete locale
+        # (nessun servizio esterno: nessun account, nessuna chiave API).
         # Se false → WebDashboard non viene avviata.
-        remote_enabled   = cfg.get("Remote_enabled", "false").strip().lower() == "true"
-        firebase_cred    = _resolve_asset(cfg.get("Firebase_credentials", "firebase_credentials.json"))
-        firebase_db_url  = cfg.get("Firebase_database_url", "")
-        firebase_enabled = remote_enabled and bool(firebase_db_url)
-
-        firebase_web_cfg = {
-            "apiKey"           : cfg.get("Firebase_web_api_key",    ""),
-            "authDomain"       : cfg.get("Firebase_auth_domain",    ""),
-            "databaseURL"      : firebase_db_url,
-            "projectId"        : cfg.get("Firebase_project_id",     ""),
-            "storageBucket"    : cfg.get("Firebase_storage_bucket", ""),
-            "messagingSenderId": cfg.get("Firebase_messaging_id",   ""),
-            "appId"            : cfg.get("Firebase_app_id",         ""),
-        }
+        remote_enabled = cfg.get("Remote_enabled", "false").strip().lower() == "true"
 
         # 1. Splash screen
         SplashScreen(firmware, logo_path, proprieties).show()
 
-        # 2. Dashboard Firebase (solo se Remote_enabled = true e Firebase configurato)
+        # 2. Dashboard locale (solo se Remote_enabled = true)
         dashboard = None
-        if firebase_enabled:
+        if remote_enabled:
             dashboard = WebDashboard(
-                firebase_cred       = firebase_cred,
-                firebase_db_url     = firebase_db_url,
-                firebase_web_config = firebase_web_cfg,
-                token               = token,
-                port                = web_port,
+                token = token,
+                port  = web_port,
             )
             dashboard.start()
-        else:
-            if remote_enabled:
-                print("  ⚠️   Remote_enabled = true ma Firebase_database_url non configurato.")
 
         # 3. Selezione directory di salvataggio
         directory = DirectorySelector(logo_path, flag_list, drive_path).run()
@@ -203,8 +185,9 @@ class Application:
             dashboard      = dashboard,  # None se remote_enabled = false
         )
 
-        # 6. Wiring bidirezionale
-        dashboard.set_response_callback(interface.handle_remote_response)
+        # 6. Wiring bidirezionale (solo se la dashboard locale è attiva)
+        if dashboard:
+            dashboard.set_response_callback(interface.handle_remote_response)
 
         interface.run()
 

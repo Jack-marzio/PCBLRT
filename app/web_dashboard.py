@@ -1,51 +1,61 @@
 # -*- coding: utf-8 -*-
 """
 web_dashboard.py
-Dashboard web in tempo reale via Firebase Realtime Database.
+Dashboard web in tempo reale — 100% locale, nessun servizio esterno.
 
-Non richiede nessun server deployato — Firebase gestisce tutta la
-comunicazione in tempo reale direttamente tra il tool Python e il browser.
+Il tool Python espone un piccolo server Flask sulla rete locale.
+Il browser si collega allo stesso server e riceve gli aggiornamenti
+in tempo reale via Server-Sent Events (SSE): nessun cloud, nessun
+SDK esterno, nessuna chiave API.
 
 Flusso:
-  [Tool Python] --firebase-admin--> Firebase DB <--JS SDK-- [Browser]
-  [Browser]     --risposta--------> Firebase DB <--listen-- [Tool Python]
+  [Tool Python] --push_entry()--> log in memoria --SSE--> [Browser]
+  [Browser]     --POST /api/respond-------------------> [Tool Python]
 
-Setup (una volta sola):
-  1. Crea progetto su https://console.firebase.google.com
-  2. Realtime Database → Crea database → Modalità test
-  3. Impostazioni progetto → Account di servizio → Genera nuova chiave privata
-     → salva come firebase_credentials.json
-  4. Impostazioni progetto → Configurazione web → copia i valori
-  5. Aggiungi al configurator.txt le chiavi Firebase_*
+Nessun setup richiesto: basta avviare l'app e condividere il link
+mostrato (valido sulla stessa rete locale/LAN).
 
-Regole database consigliate (Firebase console → Realtime Database → Regole):
-  {
-    "rules": {
-      ".read": false,
-      ".write": false,
-      "sessions": {
-        "$session_id": {
-          ".read": true,
-          ".write": true
-        }
-      }
-    }
-  }
+Utilizzo::
+
+    dashboard = WebDashboard(port=8080)
+    dashboard.start()
+    print(dashboard.link)          # apri nel browser
+    dashboard.push_entry(entry)    # invia una voce
+    dashboard.set_response_callback(mia_funzione)
 """
 
 import json
 import logging
+import queue
 import secrets
+import socket
 import threading
-from pathlib import Path
 from typing import Callable, Optional
 
-from flask import Flask, Response, request
+from flask import Flask, Response, jsonify, request, stream_with_context
+
+
+def _detect_lan_ip() -> str:
+    """
+    Rileva l'indirizzo IP della macchina sulla rete locale (LAN), così il
+    link della dashboard è raggiungibile da altri dispositivi sulla stessa
+    rete (es. smartphone). Non contatta alcun servizio esterno: sfrutta solo
+    la tabella di routing del sistema operativo (nessun pacchetto UDP viene
+    effettivamente inviato, "connect" su socket UDP è puramente locale).
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 # ── HTML template ─────────────────────────────────────────────────────────────
-# Il template riceve i parametri Firebase via __FIREBASE_CONFIG__ e __SESSION_ID__
-# che vengono sostituiti a runtime da _render_html().
+# Nessuna dipendenza esterna: font di sistema, nessun CDN, nessuna chiave API.
+# Il parametro __SESSION_ID__ viene sostituito a runtime da _render_html().
 
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="it">
@@ -54,16 +64,14 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>RadioLog — Live Monitor</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=IBM+Plex+Sans+Condensed:wght@300;700&display=swap');
-
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
     :root{
       --bg:#080c10;--surface:#0d1520;--border:#1a2e44;
       --accent:#00e5ff;--accent2:#ff6b35;--green:#39ff14;
       --red:#ff2d55;--text:#c8d8e8;--dim:#4a6580;
-      --mono:'IBM Plex Mono',monospace;
-      --sans:'IBM Plex Sans Condensed',sans-serif;
+      --mono:'Consolas','Menlo','Monaco','Courier New',monospace;
+      --sans:'Segoe UI','Helvetica Neue',Arial,sans-serif;
     }
 
     html,body{height:100%;background:var(--bg);color:var(--text);
@@ -201,31 +209,21 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="rbar">
     <span class="rlbl">Risposta &#9654;</span>
     <input id="rinp" class="rinp" type="text"
-      placeholder="Scrivi una risposta e premi Invio..." disabled/>
-    <button id="rbtn" class="rbtn" disabled>Invia</button>
+      placeholder="Scrivi una risposta e premi Invio..."/>
+    <button id="rbtn" class="rbtn">Invia</button>
     <span id="rsent" class="rsent">✓ inviato</span>
   </div>
 
   <footer>
-    <span>ProcivBes Radio Team Tool &mdash; Dashboard remota</span>
+    <span>ProcivBes Radio Team Tool &mdash; Dashboard locale</span>
     <span id="clock"></span>
   </footer>
 </div>
 
-<!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-
 <script>
   // ── Config iniettata dal server ──────────────────────────────────
-  const FB_CONFIG    = __FIREBASE_CONFIG__;
-  const SESSION_ID   = "__SESSION_ID__";
-
-  // ── Firebase init ────────────────────────────────────────────────
-  firebase.initializeApp(FB_CONFIG);
-  const db      = firebase.database();
-  const logsRef = db.ref('sessions/' + SESSION_ID + '/logs');
-  const respRef = db.ref('sessions/' + SESSION_ID + '/responses');
+  const SESSION_ID = "__SESSION_ID__";
+  const qs = (extra) => `session=${encodeURIComponent(SESSION_ID)}${extra || ''}`;
 
   // ── Stato ────────────────────────────────────────────────────────
   let logs = [], senders = new Set(), sessionStart = null;
@@ -235,6 +233,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   const rinp  = document.getElementById('rinp');
   const rbtn  = document.getElementById('rbtn');
   const rsent = document.getElementById('rsent');
+  const statusEl   = document.getElementById('status');
+  const statusText = document.getElementById('status-text');
 
   // ── Clock ────────────────────────────────────────────────────────
   function tick(){
@@ -255,10 +255,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     const ses = document.getElementById('s-sess');
     const snd = document.getElementById('s-send');
     tot.textContent = logs.length; flash(tot);
-    if(logs.length > 0) lst.textContent = logs[logs.length-1].date_time.slice(11,19);
+    if(logs.length > 0) lst.textContent = (logs[logs.length-1].date_time || '').slice(11,19);
     if(!sessionStart && logs.length > 0){
       sessionStart = logs[0].date_time;
-      ses.textContent = sessionStart.slice(11,19);
+      ses.textContent = (sessionStart || '').slice(11,19);
     }
     snd.textContent = senders.size;
     empty.style.display = logs.length === 0 ? 'flex' : 'none';
@@ -281,43 +281,76 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
 
   // ── Risposta ─────────────────────────────────────────────────────
+  // L'invio è un semplice POST, indipendente dallo stato dello stream SSE:
+  // il campo resta sempre utilizzabile, anche se il "LIVE" è momentaneamente
+  // disconnesso (es. telefono che ha bloccato lo schermo).
+  rinp.disabled = false;
+  rbtn.disabled = false;
+
+  function showSendFeedback(ok, message){
+    rsent.textContent = ok ? '✓ inviato' : ('✗ ' + message);
+    rsent.style.color = ok ? 'var(--green)' : 'var(--red)';
+    rsent.classList.add('show');
+    setTimeout(()=>rsent.classList.remove('show'), ok ? 2000 : 4000);
+  }
+
   function sendResponse(){
     const text = rinp.value.trim();
     if(!text) return;
-    respRef.push({text, timestamp: Date.now()});
-    rinp.value = '';
-    rsent.classList.add('show');
-    setTimeout(()=>rsent.classList.remove('show'), 2000);
+    rbtn.disabled = true;
+    fetch(`/api/respond?${qs()}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text})
+    })
+      .then(r => {
+        if(!r.ok) throw new Error('risposta server: ' + r.status);
+        rinp.value = '';
+        showSendFeedback(true);
+      })
+      .catch(err => {
+        showSendFeedback(false, 'invio fallito, riprova');
+        console.error('Errore invio risposta:', err);
+      })
+      .finally(() => { rbtn.disabled = false; });
   }
   rbtn.addEventListener('click', sendResponse);
   rinp.addEventListener('keydown', e=>{ if(e.key==='Enter') sendResponse(); });
 
-  // ── Firebase listener ────────────────────────────────────────────
-  const statusEl   = document.getElementById('status');
-  const statusText = document.getElementById('status-text');
+  // ── Caricamento iniziale ────────────────────────────────────────
+  fetch(`/api/logs?${qs()}`)
+    .then(r => r.ok ? r.json() : [])
+    .then(data => {
+      data.forEach(entry => { logs.push(entry); addRow(entry, false); });
+      updateStats();
+    })
+    .catch(() => {});
 
-  // Connessione status
-  db.ref('.info/connected').on('value', snap => {
-    if(snap.val()){
+  // ── Aggiornamenti in tempo reale via Server-Sent Events ──────────
+  function connectStream(){
+    const es = new EventSource(`/stream?${qs()}`);
+
+    es.onopen = () => {
       statusEl.className = 'pill live';
       statusText.textContent = 'LIVE';
-      rinp.disabled = false;
-      rbtn.disabled = false;
-    } else {
+    };
+
+    es.onmessage = (ev) => {
+      if(!ev.data) return;
+      const entry = JSON.parse(ev.data);
+      logs.push(entry);
+      addRow(entry, true);
+      updateStats();
+    };
+
+    es.onerror = () => {
       statusEl.className = 'pill dead';
       statusText.textContent = 'DISCONNESSO';
-      rinp.disabled = true;
-      rbtn.disabled = true;
-    }
-  });
-
-  // Nuovi log in tempo reale
-  logsRef.on('child_added', snap => {
-    const entry = snap.val();
-    logs.push(entry);
-    addRow(entry, logs.length > 1);   // no animate per il primo batch
-    updateStats();
-  });
+      // EventSource riprova automaticamente la connessione;
+      // l'invio risposte resta comunque attivo (POST indipendente).
+    };
+  }
+  connectStream();
 </script>
 </body>
 </html>
@@ -328,76 +361,62 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 class WebDashboard:
     """
-    Dashboard web in tempo reale basata su Firebase Realtime Database.
+    Dashboard web in tempo reale — completamente locale.
 
-    Non richiede nessun server deployato. Firebase gestisce la sincronizzazione
-    tra il tool Python (firebase-admin) e il browser (Firebase JS SDK).
+    Un server Flask (in un thread daemon) serve la pagina e sincronizza
+    log/risposte via Server-Sent Events. Nessun dato lascia la rete locale.
 
-    Percorsi Firebase usati:
-      sessions/<session_id>/logs/        → voci del log (scritte da Python)
-      sessions/<session_id>/responses/   → risposte del browser (lette da Python)
+    Endpoint esposti:
+      GET  /?session=...           → pagina HTML della dashboard
+      GET  /api/logs?session=...   → log accumulato finora (JSON)
+      GET  /stream?session=...     → stream SSE delle nuove voci
+      POST /api/respond?session=...→ invia una risposta dal browser al tool
+      GET  /health                 → stato del servizio
 
     Utilizzo::
 
-        dashboard = WebDashboard(
-            firebase_cred  = "firebase_credentials.json",
-            firebase_db_url= "https://progetto-default-rtdb.europe-west1.firebasedatabase.app",
-            firebase_web_config = {
-                "apiKey": "...", "authDomain": "...",
-                "databaseURL": "...", "projectId": "..."
-            },
-            on_response = mia_funzione,
-        )
+        dashboard = WebDashboard(port=8080, on_response=mia_funzione)
         dashboard.start()
-        print(dashboard.link)          # apri nel browser
+        print(dashboard.link)          # apri nel browser (stessa rete locale)
         dashboard.push_entry(entry)    # invia una voce
     """
 
     def __init__(
         self,
-        firebase_cred:       str,
-        firebase_db_url:     str,
-        firebase_web_config: dict,
-        session_id:          Optional[str]               = None,
-        on_response:         Optional[Callable[[str], None]] = None,
-        port:                int                          = 8080,
-        # Parametri legacy mantenuti per compatibilità con main.py esistente
-        host:                str                          = "0.0.0.0",
-        token:               Optional[str]               = None,
-        public_host:         Optional[str]               = None,
+        session_id:  Optional[str]                    = None,
+        on_response: Optional[Callable[[str], None]]  = None,
+        port:        int                              = 8080,
+        host:        str                              = "0.0.0.0",
+        token:       Optional[str]                    = None,
+        public_host: Optional[str]                    = None,
+        **_ignored,   # assorbe eventuali parametri legacy (es. firebase_*) senza errori
     ):
-        self._cred_path    = firebase_cred
-        self._db_url       = firebase_db_url
-        self._web_config   = firebase_web_config
         # Usa token come session_id se fornito → stesso link ad ogni riavvio
-        self._session_id   = session_id or token or secrets.token_urlsafe(20)
-        self._on_response  = on_response
-        self._port         = port
-        self._host         = host
+        self._session_id  = session_id or token or secrets.token_urlsafe(20)
+        self._on_response = on_response
+        self._port        = port
+        self._host        = host
+        self._public_host = public_host
 
-        self._log:   list[dict] = []
-        self._lock             = threading.Lock()
-        self._db               = None    # firebase_admin.db module
-        self._logs_ref         = None
-        self._responses_ref    = None
+        self._log:         list[dict]        = []
+        self._lock                            = threading.Lock()
+        self._subscribers: list[queue.Queue]  = []
 
         self._app = Flask(__name__)
         self._setup_routes()
-        self._init_firebase()
 
     # ── Public ────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Avvia il server Flask locale e il listener delle risposte Firebase."""
+        """Avvia il server Flask locale (thread daemon)."""
         t = threading.Thread(target=self._serve, daemon=True, name="WebDashboard")
         t.start()
-        r = threading.Thread(target=self._listen_responses, daemon=True, name="ResponseListener")
-        r.start()
-        print(f"\n  📡  Dashboard → {self.link}\n")
+        print(f"\n  📡  Dashboard (locale) → {self.link}\n")
 
     def push_entry(self, entry: tuple) -> None:
         """
-        Aggiunge una voce al log Firebase (visibile in tempo reale nel browser).
+        Aggiunge una voce al log e la invia in tempo reale a tutti i
+        browser collegati (via Server-Sent Events).
 
         Args:
             entry: tupla (date_time, sender, receiver, msg_received, msg_sent)
@@ -411,24 +430,19 @@ class WebDashboard:
         }
         with self._lock:
             self._log.append(record)
+            subscribers = list(self._subscribers)
 
-        if self._logs_ref:
-            threading.Thread(
-                target=self._logs_ref.push,
-                args=(record,),
-                daemon=True
-            ).start()
+        for q in subscribers:
+            q.put(record)
 
     def set_response_callback(self, callback: Callable[[str], None]) -> None:
-        """Imposta o aggiorna il callback per le risposte remote."""
+        """Imposta o aggiorna il callback per le risposte dal browser."""
         self._on_response = callback
 
     def clear_session(self) -> None:
-        """Svuota tutti i dati della sessione corrente su Firebase."""
-        if self._logs_ref:
-            self._logs_ref.delete()
-        if self._responses_ref:
-            self._responses_ref.delete()
+        """Svuota tutti i dati della sessione corrente (solo in memoria locale)."""
+        with self._lock:
+            self._log.clear()
 
     @property
     def session_id(self) -> str:
@@ -441,70 +455,21 @@ class WebDashboard:
 
     @property
     def link(self) -> str:
-        display_host = "localhost" if self._host in ("0.0.0.0", "") else self._host
+        if self._public_host:
+            display_host = self._public_host
+        elif self._host in ("0.0.0.0", ""):
+            # In ascolto su tutte le interfacce: mostra l'IP LAN reale,
+            # così il link funziona anche da altri dispositivi sulla stessa
+            # rete (es. smartphone). "localhost" funzionerebbe solo sul PC.
+            display_host = _detect_lan_ip()
+        else:
+            display_host = self._host
         return f"http://{display_host}:{self._port}?session={self._session_id}"
 
     # ── Private ───────────────────────────────────────────────────────
 
-    def _init_firebase(self) -> None:
-        """Inizializza Firebase Admin SDK."""
-        try:
-            import firebase_admin
-            from firebase_admin import credentials, db as fdb
-
-            cred_path = Path(self._cred_path)
-            if not cred_path.exists():
-                print(f"  ⚠️  firebase_credentials.json non trovato: {cred_path}")
-                return
-
-            cred = credentials.Certificate(str(cred_path))
-            try:
-                firebase_admin.get_app()
-            except ValueError:
-                firebase_admin.initialize_app(cred, {"databaseURL": self._db_url})
-
-            self._db            = fdb
-            self._logs_ref      = fdb.reference(f"sessions/{self._session_id}/logs")
-            self._responses_ref = fdb.reference(f"sessions/{self._session_id}/responses")
-
-        except ImportError:
-            print("  ⚠️  firebase-admin non installato: pip install firebase-admin")
-        except Exception as e:
-            print(f"  ⚠️  Errore inizializzazione Firebase: {e}")
-
-    def _listen_responses(self) -> None:
-        """
-        Listener Firebase per le risposte del browser.
-        Chiama on_response per ogni nuova risposta e la cancella dal DB.
-        """
-        if not self._responses_ref:
-            return
-
-        def on_event(event):
-            if event.event_type == "put" and event.data:
-                data = event.data
-                if isinstance(data, dict):
-                    for key, value in data.items():
-                        text = value.get("text", "") if isinstance(value, dict) else str(value)
-                        if text and self._on_response:
-                            self._on_response(text)
-                        # Cancella la risposta consumata
-                        try:
-                            self._responses_ref.child(key).delete()
-                        except Exception:
-                            pass
-
-        try:
-            self._responses_ref.listen(on_event)
-        except Exception as e:
-            print(f"  ⚠️  Listener risposte interrotto: {e}")
-
-    def _render_html(self) -> str:
-        """Inietta configurazione Firebase e session_id nell'HTML template."""
-        config_json = json.dumps(self._web_config)
-        return (_HTML_TEMPLATE
-                .replace("__FIREBASE_CONFIG__", config_json)
-                .replace("__SESSION_ID__", self._session_id))
+    def _authorized(self) -> bool:
+        return request.args.get("session", "") == self._session_id
 
     def _serve(self) -> None:
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -518,15 +483,65 @@ class WebDashboard:
             else:
                 raise
 
+    def _render_html(self) -> str:
+        """Inietta il session_id nell'HTML template."""
+        return _HTML_TEMPLATE.replace("__SESSION_ID__", self._session_id)
+
     def _setup_routes(self) -> None:
         app = self._app
 
         @app.route("/")
         def index():
-            session = request.args.get("session", "")
-            if session != self._session_id:
+            if not self._authorized():
                 return Response("Non autorizzato", status=401)
             return self._render_html()
+
+        @app.route("/api/logs")
+        def api_logs():
+            if not self._authorized():
+                return Response(status=401)
+            with self._lock:
+                return jsonify(list(self._log))
+
+        @app.route("/stream")
+        def stream():
+            if not self._authorized():
+                return Response(status=401)
+
+            q: queue.Queue = queue.Queue()
+            with self._lock:
+                self._subscribers.append(q)
+
+            def gen():
+                try:
+                    yield ": connected\n\n"
+                    while True:
+                        try:
+                            record = q.get(timeout=15)
+                            yield f"data: {json.dumps(record)}\n\n"
+                        except queue.Empty:
+                            # keep-alive: evita timeout su proxy/browser
+                            yield ": ping\n\n"
+                finally:
+                    with self._lock:
+                        if q in self._subscribers:
+                            self._subscribers.remove(q)
+
+            return Response(
+                stream_with_context(gen()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        @app.route("/api/respond", methods=["POST"])
+        def api_respond():
+            if not self._authorized():
+                return Response(status=401)
+            data = request.get_json(silent=True) or {}
+            text = str(data.get("text", "")).strip()
+            if text and self._on_response:
+                self._on_response(text)
+            return jsonify({"ok": True})
 
         @app.route("/health")
         def health():

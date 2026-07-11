@@ -5,6 +5,7 @@ Splash screen e interfaccia principale di log delle comunicazioni radio.
 """
 
 import os
+import queue
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
@@ -73,108 +74,6 @@ class SplashScreen:
 
 
 
-
-# ======================================================================
-# Mode Selector
-# ======================================================================
-
-class ModeSelector:
-    """
-    Finestra modale che chiede all'operatore se trasmettere
-    in modalità Locale o Remota (Fly.io).
-
-    Viene mostrata solo se Remote_enabled = true nel configuratore.
-    Restituisce "local" o "remote".
-    """
-
-    _TRANSLATIONS = {
-        "it": {
-            "title"      : "Modalità di trasmissione",
-            "subtitle"   : "Seleziona come vuoi trasmettere i dati:",
-            "local_btn"  : "📍  Locale",
-            "local_desc" : "Dashboard accessibile solo su questa rete",
-            "remote_btn" : "🌐  Remota (Fly.io)",
-            "remote_desc": "Dashboard accessibile da qualsiasi browser",
-        },
-        "en": {
-            "title"      : "Transmission mode",
-            "subtitle"   : "Select how to transmit data:",
-            "local_btn"  : "📍  Local",
-            "local_desc" : "Dashboard accessible on this network only",
-            "remote_btn" : "🌐  Remote (Fly.io)",
-            "remote_desc": "Dashboard accessible from any browser",
-        },
-    }
-
-    def __init__(self, logo_path: str = "", lang: str = "it"):
-        self._logo_path = logo_path
-        self._lang      = lang
-        self._result: str = "local"
-
-    def run(self) -> str:
-        """Mostra il dialogo e restituisce 'local' o 'remote'."""
-        self._build()
-        self._root.mainloop()
-        return self._result
-
-    def _build(self) -> None:
-        t    = self._TRANSLATIONS[self._lang]
-        root = tk.Tk()
-        root.title(t["title"])
-        root.geometry("480x280")
-        root.resizable(False, False)
-        root.configure(bg="#0d1520")
-        self._root = root
-
-        try:
-            icon = ImageTk.PhotoImage(
-                Image.open(self._logo_path).resize((32, 32), Image.LANCZOS)
-            )
-            root.iconphoto(False, icon)
-            self._icon = icon
-        except Exception:
-            pass
-
-        tk.Label(
-            root, text=t["title"],
-            font=("Helvetica", 14, "bold"),
-            bg="#0d1520", fg="#00e5ff"
-        ).pack(pady=(22, 4))
-
-        tk.Label(
-            root, text=t["subtitle"],
-            font=("Helvetica", 9),
-            bg="#0d1520", fg="#4a6580"
-        ).pack(pady=(0, 18))
-
-        btn_frame = tk.Frame(root, bg="#0d1520")
-        btn_frame.pack()
-
-        def _make_btn(text, desc, value, accent):
-            col = tk.Frame(btn_frame, bg="#0d1520")
-            col.pack(side="left", padx=18)
-            tk.Button(
-                col, text=text,
-                font=("Helvetica", 11, "bold"),
-                bg="#1a2e44", fg=accent,
-                activebackground=accent, activeforeground="#080c10",
-                relief="flat", bd=0,
-                padx=18, pady=10,
-                cursor="hand2",
-                command=lambda v=value: self._select(v),
-            ).pack()
-            tk.Label(
-                col, text=desc,
-                font=("Helvetica", 7),
-                bg="#0d1520", fg="#4a6580", wraplength=160
-            ).pack(pady=(6, 0))
-
-        _make_btn(t["local_btn"],  t["local_desc"],  "local",  "#39ff14")
-        _make_btn(t["remote_btn"], t["remote_desc"], "remote", "#00e5ff")
-
-    def _select(self, value: str) -> None:
-        self._result = value
-        self._root.destroy()
 
 
 # ======================================================================
@@ -278,6 +177,11 @@ class RadioLogInterface:
         self._reporter         = ReportCreator()
         self._dashboard        = dashboard
         self._root: tk.Tk | None = None
+        # Coda thread-safe: il thread Flask vi deposita le risposte remote,
+        # il thread Tkinter (main loop) le preleva periodicamente.
+        # Tkinter non è thread-safe: non si possono chiamare i suoi metodi
+        # (es. root.after) da un thread diverso da quello della mainloop.
+        self._remote_queue: queue.Queue = queue.Queue()
 
     # ------------------------------------------------------------------
     # Public
@@ -291,11 +195,12 @@ class RadioLogInterface:
 
     def handle_remote_response(self, text: str) -> None:
         """
-        Riceve una risposta dal client remoto (chiamato da thread WebSocket).
-        Usa root.after() per aggiornare la UI in modo thread-safe.
+        Riceve una risposta dal client remoto (chiamato dal thread Flask
+        della dashboard). Si limita a mettere il testo in una coda
+        thread-safe: l'aggiornamento della UI Tkinter avviene sempre e solo
+        nel thread principale, tramite _poll_remote_queue().
         """
-        if self._root:
-            self._root.after(0, self._append_remote_response, text)
+        self._remote_queue.put(text)
 
     # ------------------------------------------------------------------
     # Window construction
@@ -324,6 +229,11 @@ class RadioLogInterface:
         self._build_dashboard_bar(root)
         self._build_buttons(root)
         self._build_flags(root)
+
+        # Avvia il polling periodico della coda risposte remote.
+        # Va schedulato qui (thread principale) e non richiamato dal thread
+        # Flask, altrimenti Tkinter solleva "main thread is not in main loop".
+        self._poll_remote_queue()
 
     def _build_top_bar(self, parent: tk.Widget) -> None:
         frame = tk.Frame(parent)
@@ -608,10 +518,26 @@ class RadioLogInterface:
         self._lbl_copied.config(text=self._t()["link_copied"])
         self._root.after(2000, lambda: self._lbl_copied.config(text=""))
 
+    REMOTE_POLL_MS = 200
+
+    def _poll_remote_queue(self) -> None:
+        """
+        Preleva tutte le risposte remote accumulate nella coda e le mostra
+        nel pannello. Eseguito esclusivamente nel thread Tkinter (schedulato
+        con root.after, mai chiamato da altri thread).
+        """
+        while True:
+            try:
+                text = self._remote_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._append_remote_response(text)
+        self._root.after(self.REMOTE_POLL_MS, self._poll_remote_queue)
+
     def _append_remote_response(self, text: str) -> None:
         """
         Aggiunge una risposta remota al pannello (eseguito nel thread Tkinter).
-        Chiamato esclusivamente tramite root.after() da handle_remote_response.
+        Chiamato esclusivamente da _poll_remote_queue().
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
         self._response_listbox.insert(tk.END, f"[{timestamp}] {text}")
