@@ -172,7 +172,9 @@ class Application:
             sys.exit(0)
 
         # 4. Numero di protocollo
-        n_protocol = self._reporter.count_files(directory, ".pdf")
+        n_protocol = self._reporter.count_files(
+            directory, ".pdf", prefix="rapporto_comunicazioni_radio_"
+        )
 
         # 5. Interfaccia principale
         interface = RadioLogInterface(
@@ -185,9 +187,9 @@ class Application:
             dashboard      = dashboard,  # None se remote_enabled = false
         )
 
-        # 6. Wiring bidirezionale (solo se la dashboard locale è attiva)
+        # 6. Wiring bidirezionale della chat (solo se la dashboard locale è attiva)
         if dashboard:
-            dashboard.set_response_callback(interface.handle_remote_response)
+            dashboard.set_message_callback(interface.handle_remote_message)
 
         interface.run()
 

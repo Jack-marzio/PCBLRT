@@ -110,12 +110,16 @@ class RadioLogInterface:
             "pdf_title"       : "Registro Comunicazioni Radio",
             "listbox_header"  : "Log comunicazioni",
             "xlsx_success"    : "Rapporto XLSX generato in {}",
+            "chat_pdf_success" : "Rapporto chat PDF generato in {}",
+            "chat_xlsx_success": "Rapporto chat XLSX generato in {}",
+            "chat_report_empty": "Nessun messaggio in chat: report chat non generato.",
             "connected"       : "Connesso a Internet",
             "disconnected"    : "Non connesso a Internet",
             "waiting"         : "Attendo...",
             "mkdir_error"     : "Impossibile creare la directory: {}",
             "pdf_gen_error"   : "Errore nella generazione del report: {}",
-            "remote_header"   : "Risposte remote",
+            "chat_header"     : "Chat",
+            "chat_send"       : "Invia",
             "dashboard_link"  : "Link dashboard:",
             "copy_link"       : "Copia link",
             "link_copied"     : "Link copiato!",
@@ -141,12 +145,16 @@ class RadioLogInterface:
             "pdf_title"       : "Radio Communication Log",
             "listbox_header"  : "Communication log",
             "xlsx_success"    : "XLSX report generated at {}",
+            "chat_pdf_success" : "Chat PDF report generated at {}",
+            "chat_xlsx_success": "Chat XLSX report generated at {}",
+            "chat_report_empty": "No chat messages: chat report not generated.",
             "connected"       : "Connected to Internet",
             "disconnected"    : "Not connected to Internet",
             "waiting"         : "Waiting...",
             "mkdir_error"     : "Cannot create directory: {}",
             "pdf_gen_error"   : "Error generating report: {}",
-            "remote_header"   : "Remote responses",
+            "chat_header"     : "Chat",
+            "chat_send"       : "Send",
             "dashboard_link"  : "Dashboard link:",
             "copy_link"       : "Copy link",
             "link_copied"     : "Link copied!",
@@ -173,6 +181,7 @@ class RadioLogInterface:
         self._program_title    = program_title
         self._lang             = "it"
         self._communication_log: list[tuple] = []
+        self._chat_log: list[tuple] = []  # (date_time, sender, origin, text)
         self._recovery         = RecoveryManager()
         self._reporter         = ReportCreator()
         self._dashboard        = dashboard
@@ -193,14 +202,14 @@ class RadioLogInterface:
         self._load_recovery()
         self._root.mainloop()
 
-    def handle_remote_response(self, text: str) -> None:
+    def handle_remote_message(self, sender: str, text: str) -> None:
         """
-        Riceve una risposta dal client remoto (chiamato dal thread Flask
-        della dashboard). Si limita a mettere il testo in una coda
-        thread-safe: l'aggiornamento della UI Tkinter avviene sempre e solo
-        nel thread principale, tramite _poll_remote_queue().
+        Riceve un messaggio chat dal client remoto (chiamato dal thread
+        Flask della dashboard). Si limita a mettere (sender, text) in una
+        coda thread-safe: l'aggiornamento della UI Tkinter avviene sempre e
+        solo nel thread principale, tramite _poll_remote_queue().
         """
-        self._remote_queue.put(text)
+        self._remote_queue.put((sender, text))
 
     # ------------------------------------------------------------------
     # Window construction
@@ -224,7 +233,7 @@ class RadioLogInterface:
         panels.columnconfigure(1, weight=1)
 
         self._build_listbox(panels)
-        self._build_response_panel(panels)
+        self._build_chat_panel(panels)
 
         self._build_dashboard_bar(root)
         self._build_buttons(root)
@@ -327,27 +336,39 @@ class RadioLogInterface:
         self._root.bind("<Up>",   self._listbox_move_up)
         self._root.bind("<Down>", self._listbox_move_down)
 
-    def _build_response_panel(self, parent: tk.Widget) -> None:
+    def _build_chat_panel(self, parent: tk.Widget) -> None:
         """
-        Pannello destro: risposte in arrivo dal client remoto.
-        Ogni risposta viene appesa con timestamp.
+        Pannello destro: chat libera a due vie con chi è collegato da remoto.
+        I messaggi mostrano mittente e provenienza (locale/remoto) con
+        colori diversi. L'operatore può scrivere dal campo in basso.
         """
         frame = tk.Frame(parent, bd=1, relief="sunken")
         frame.grid(row=0, column=1, sticky="nsew")
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
 
         self._response_label = tk.Label(
-            frame, text=self._t()["remote_header"],
+            frame, text=self._t()["chat_header"],
             font=("Helvetica", 12, "bold")
         )
-        self._response_label.pack(anchor="w", padx=5, pady=(5, 0))
+        self._response_label.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(5, 0))
 
-        self._response_listbox = tk.Listbox(
+        self._chat_listbox = tk.Listbox(
             frame, width=35, height=10,
             bg="#1a1a2e", fg="#00e5ff",
             selectbackground="#0d3b66",
             font=("Courier", 9)
         )
-        self._response_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+        self._chat_listbox.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+
+        self._entry_chat = ttk.Entry(frame)
+        self._entry_chat.grid(row=2, column=0, sticky="ew", padx=(5, 0), pady=(0, 5))
+        self._entry_chat.bind("<Return>", lambda e: self._send_chat_message())
+
+        self._btn_chat_send = tk.Button(
+            frame, text=self._t()["chat_send"], command=self._send_chat_message
+        )
+        self._btn_chat_send.grid(row=2, column=1, padx=(5, 5), pady=(0, 5))
 
     def _build_dashboard_bar(self, parent: tk.Widget) -> None:
         """
@@ -465,9 +486,15 @@ class RadioLogInterface:
                 return
 
         try:
-            n_pdf  = self._reporter.count_files(self._directory, ".pdf")
-            n_xlsx = self._reporter.count_files(self._directory, ".xlsx")
+            n_pdf  = self._reporter.count_files(
+                self._directory, ".pdf", prefix="rapporto_comunicazioni_radio_"
+            )
+            n_xlsx = self._reporter.count_files(
+                self._directory, ".xlsx", prefix="rapporto_comunicazioni_radio_"
+            )
 
+            # Report log comunicazioni — salvato sia nella directory scelta
+            # sia nel backup locale fisso (report_creator se ne occupa).
             pdf_path  = self._reporter.create_pdf(
                 operator, event, self._login_datetime,
                 self._communication_log, self._directory, n_pdf, self._logo_path
@@ -478,6 +505,27 @@ class RadioLogInterface:
             )
             messagebox.showinfo("Success", t["pdf_success"].format(pdf_path))
             messagebox.showinfo("Success", t["xlsx_success"].format(xlsx_path))
+
+            # Report chat — stessa logica, generato solo se ci sono messaggi.
+            if self._chat_log:
+                n_chat_pdf  = self._reporter.count_files(
+                    self._directory, ".pdf", prefix="rapporto_chat_"
+                )
+                n_chat_xlsx = self._reporter.count_files(
+                    self._directory, ".xlsx", prefix="rapporto_chat_"
+                )
+                chat_pdf_path  = self._reporter.create_chat_pdf(
+                    operator, event, self._login_datetime,
+                    self._chat_log, self._directory, n_chat_pdf, self._logo_path
+                )
+                chat_xlsx_path = self._reporter.create_chat_xlsx(
+                    operator, event, self._login_datetime,
+                    self._chat_log, self._directory, n_chat_xlsx, self._logo_path
+                )
+                messagebox.showinfo("Success", t["chat_pdf_success"].format(chat_pdf_path))
+                messagebox.showinfo("Success", t["chat_xlsx_success"].format(chat_xlsx_path))
+            else:
+                messagebox.showinfo(t["warning_title"], t["chat_report_empty"])
         except Exception as e:
             messagebox.showerror(t["error_title"], t["pdf_gen_error"].format(e))
 
@@ -491,9 +539,10 @@ class RadioLogInterface:
         self._root.title(t["pdf_title"])
         self._title_label.config(text=t["pdf_title"])
         self._listbox_label.config(text=t["listbox_header"])
-        self._response_label.config(text=t["remote_header"])
+        self._response_label.config(text=t["chat_header"])
         self._btn_add_log.config(text=t["add_log"])
         self._btn_gen_pdf.config(text=t["generate_pdf"])
+        self._btn_chat_send.config(text=t["chat_send"])
         for key in ("operator", "event", "manual_datetime",
                     "sender", "receiver", "msg_received", "msg_sent"):
             self._labels[key].config(text=t[key])
@@ -522,26 +571,52 @@ class RadioLogInterface:
 
     def _poll_remote_queue(self) -> None:
         """
-        Preleva tutte le risposte remote accumulate nella coda e le mostra
-        nel pannello. Eseguito esclusivamente nel thread Tkinter (schedulato
-        con root.after, mai chiamato da altri thread).
+        Preleva tutti i messaggi chat remoti accumulati nella coda e li
+        mostra nel pannello. Eseguito esclusivamente nel thread Tkinter
+        (schedulato con root.after, mai chiamato da altri thread).
         """
         while True:
             try:
-                text = self._remote_queue.get_nowait()
+                sender, text = self._remote_queue.get_nowait()
             except queue.Empty:
                 break
-            self._append_remote_response(text)
+            self._append_chat_message(sender, text, origin="remoto")
         self._root.after(self.REMOTE_POLL_MS, self._poll_remote_queue)
 
-    def _append_remote_response(self, text: str) -> None:
+    def _send_chat_message(self) -> None:
         """
-        Aggiunge una risposta remota al pannello (eseguito nel thread Tkinter).
-        Chiamato esclusivamente da _poll_remote_queue().
+        Invia un messaggio chat dall'operatore locale: lo mostra subito nel
+        pannello e lo inoltra alla dashboard (che lo trasmette in tempo
+        reale a tutti i browser collegati via SSE).
         """
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self._response_listbox.insert(tk.END, f"[{timestamp}] {text}")
-        self._response_listbox.see(tk.END)
+        text = self._entry_chat.get().strip()
+        if not text:
+            return
+        sender = self._entry_operator.get().strip() or "Operatore"
+
+        self._append_chat_message(sender, text, origin="locale")
+        if self._dashboard:
+            self._dashboard.push_chat_message(sender, text, origin="locale")
+
+        self._entry_chat.delete(0, tk.END)
+
+    def _append_chat_message(self, sender: str, text: str, origin: str) -> None:
+        """
+        Aggiunge un messaggio al pannello chat (eseguito nel thread Tkinter)
+        e lo registra nella cronologia usata per generare il report chat.
+        origin: "locale" (operatore, dall'app) oppure "remoto" (dal browser).
+        """
+        now = datetime.now()
+        timestamp = now.strftime("%H:%M:%S")
+        full_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        idx = self._chat_listbox.size()
+        self._chat_listbox.insert(tk.END, f"[{timestamp}] {sender}: {text}")
+        color = "#00e5ff" if origin == "locale" else "#ff6b35"
+        self._chat_listbox.itemconfig(idx, foreground=color)
+        self._chat_listbox.see(tk.END)
+
+        self._chat_log.append((full_datetime, sender, origin, text))
 
     def _load_recovery(self) -> None:
         """

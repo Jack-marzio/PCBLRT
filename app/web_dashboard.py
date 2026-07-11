@@ -8,20 +8,28 @@ Il browser si collega allo stesso server e riceve gli aggiornamenti
 in tempo reale via Server-Sent Events (SSE): nessun cloud, nessun
 SDK esterno, nessuna chiave API.
 
+La pagina ha due sezioni (tab):
+  - Log      → sola visualizzazione del registro comunicazioni radio
+  - Chat     → chat libera A DUE VIE tra l'operatore locale (Tkinter)
+               e chi è collegato da remoto (browser). Chi scrive da
+               remoto indica un nome la prima volta, riusato per tutti
+               i messaggi di quella sessione di navigazione.
+
 Flusso:
-  [Tool Python] --push_entry()--> log in memoria --SSE--> [Browser]
-  [Browser]     --POST /api/respond-------------------> [Tool Python]
+  [Tool Python] --push_entry()--------> log  --SSE--> [Browser]
+  [Tool Python] --push_chat_message()--> chat --SSE--> [Browser]
+  [Browser]     --POST /api/chat/send----------------> [Tool Python]
 
 Nessun setup richiesto: basta avviare l'app e condividere il link
 mostrato (valido sulla stessa rete locale/LAN).
 
 Utilizzo::
 
-    dashboard = WebDashboard(port=8080)
+    dashboard = WebDashboard(port=8080, on_message=mia_funzione)
     dashboard.start()
-    print(dashboard.link)          # apri nel browser
-    dashboard.push_entry(entry)    # invia una voce
-    dashboard.set_response_callback(mia_funzione)
+    print(dashboard.link)                          # apri nel browser
+    dashboard.push_entry(entry)                     # voce di log
+    dashboard.push_chat_message("Operatore", "ciao") # messaggio chat locale
 """
 
 import json
@@ -30,6 +38,7 @@ import queue
 import secrets
 import socket
 import threading
+from datetime import datetime
 from typing import Callable, Optional
 
 from flask import Flask, Response, jsonify, request, stream_with_context
@@ -82,7 +91,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       opacity:.4}
 
     #app{position:relative;z-index:1;display:grid;
-      grid-template-rows:auto auto 1fr auto auto;height:100vh}
+      grid-template-rows:auto auto auto 1fr auto;height:100vh}
 
     header{display:flex;align-items:center;justify-content:space-between;
       padding:14px 28px;border-bottom:1px solid var(--border);
@@ -103,6 +112,21 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       animation:pulse 1.4s ease-in-out infinite}
     @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
 
+    /* ── Tabs ─────────────────────────────────────────────────────── */
+    .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface)}
+    .tab{padding:10px 28px;font-family:var(--sans);font-weight:700;font-size:.78rem;
+      letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer;
+      border-bottom:2px solid transparent;transition:color .2s,border-color .2s;
+      position:relative}
+    .tab:hover{color:var(--text)}
+    .tab.active{color:var(--accent);border-color:var(--accent)}
+    .tab .badge{display:inline-block;min-width:16px;padding:0 4px;margin-left:6px;
+      border-radius:8px;background:var(--accent2);color:#000;font-size:.62rem;
+      font-weight:700;text-align:center;vertical-align:middle}
+
+    .view{display:none;min-height:0;overflow:hidden;flex-direction:column}
+    .view.active{display:flex}
+
     .stats{display:flex;border-bottom:1px solid var(--border);background:var(--surface)}
     .stat{flex:1;padding:10px 20px;border-right:1px solid var(--border);
       display:flex;flex-direction:column;gap:2px}
@@ -112,7 +136,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       color:var(--accent);letter-spacing:.04em;transition:color .4s}
     .sv.flash{color:var(--green)}
 
-    .tbl-wrap{overflow-y:auto;padding:0 0 8px;scroll-behavior:smooth}
+    .tbl-wrap{overflow-y:auto;padding:0 0 8px;scroll-behavior:smooth;flex:1}
     .tbl-wrap::-webkit-scrollbar{width:6px}
     .tbl-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 
@@ -162,6 +186,46 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       transition:opacity .3s;letter-spacing:.1em;text-transform:uppercase}
     .rsent.show{opacity:1}
 
+    /* ── Chat ─────────────────────────────────────────────────────── */
+    .chat-wrap{flex:1;overflow-y:auto;padding:18px 28px;display:flex;
+      flex-direction:column;gap:10px;scroll-behavior:smooth}
+    .chat-wrap::-webkit-scrollbar{width:6px}
+    .chat-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+    .msg{max-width:70%;padding:9px 14px;border-radius:10px;font-size:.82rem;
+      line-height:1.5;word-break:break-word;
+      animation:row-in .3s cubic-bezier(.2,0,.2,1) both}
+    .msg .who{display:block;font-family:var(--sans);font-weight:700;font-size:.65rem;
+      letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px;opacity:.8}
+    .msg .when{font-size:.6rem;color:var(--dim);margin-left:8px;font-weight:400}
+    .msg.local{align-self:flex-end;background:rgba(0,229,255,.12);
+      border:1px solid rgba(0,229,255,.35)}
+    .msg.local .who{color:var(--accent)}
+    .msg.remote{align-self:flex-start;background:rgba(255,107,53,.1);
+      border:1px solid rgba(255,107,53,.3)}
+    .msg.remote .who{color:var(--accent2)}
+    .chat-empty{display:flex;flex-direction:column;align-items:center;
+      justify-content:center;flex:1;gap:12px;color:var(--dim)}
+    .chat-empty .ic{font-size:2.5rem;opacity:.3}
+    .chat-empty p{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase}
+
+    /* ── Overlay richiesta nome ──────────────────────────────────── */
+    .overlay{position:fixed;inset:0;z-index:50;background:rgba(4,7,10,.88);
+      display:none;align-items:center;justify-content:center;padding:20px}
+    .overlay.show{display:flex}
+    .name-card{background:var(--surface);border:1px solid var(--border);
+      border-radius:10px;padding:28px;max-width:340px;width:100%;text-align:center}
+    .name-card h2{font-family:var(--sans);font-size:1rem;letter-spacing:.06em;
+      text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+    .name-card p{font-size:.78rem;color:var(--dim);margin-bottom:16px;line-height:1.5}
+    .name-card input{width:100%;background:#0a1520;border:1px solid var(--border);
+      border-radius:4px;color:var(--text);font-family:var(--mono);font-size:.9rem;
+      padding:9px 12px;outline:none;margin-bottom:14px}
+    .name-card input:focus{border-color:var(--accent)}
+    .name-card button{width:100%;background:var(--accent);color:var(--bg);
+      border:none;border-radius:4px;font-family:var(--sans);font-weight:700;
+      font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;
+      padding:10px;cursor:pointer}
+
     footer{border-top:1px solid var(--border);background:var(--surface);
       padding:8px 28px;display:flex;align-items:center;justify-content:space-between;
       font-size:.65rem;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
@@ -185,33 +249,50 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </header>
 
-  <div class="stats">
-    <div class="stat"><span class="sl">Comunicazioni</span><span class="sv" id="s-tot">0</span></div>
-    <div class="stat"><span class="sl">Ultima voce</span><span class="sv" id="s-last" style="font-size:.9rem">—</span></div>
-    <div class="stat"><span class="sl">Sessione avviata</span><span class="sv" id="s-sess" style="font-size:.9rem">—</span></div>
-    <div class="stat"><span class="sl">Mittenti unici</span><span class="sv" id="s-send">0</span></div>
+  <div class="tabs">
+    <div class="tab active" id="tab-log" data-view="log">Log</div>
+    <div class="tab" id="tab-chat" data-view="chat">Chat<span class="badge" id="chat-badge" style="display:none">0</span></div>
   </div>
 
-  <div class="tbl-wrap" id="wrap">
-    <table>
-      <thead><tr>
-        <th>#</th><th>Data / Ora</th><th>Mittente</th>
-        <th>Ricevente</th><th>Messaggio ricevuto</th><th>Messaggio trasmesso</th>
-      </tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div class="empty" id="empty">
-      <span class="ic">&#9632;</span>
-      <p>In attesa di comunicazioni...</p>
+  <!-- ── Vista LOG ──────────────────────────────────────────────── -->
+  <div class="view active" id="view-log">
+    <div class="stats">
+      <div class="stat"><span class="sl">Comunicazioni</span><span class="sv" id="s-tot">0</span></div>
+      <div class="stat"><span class="sl">Ultima voce</span><span class="sv" id="s-last" style="font-size:.9rem">—</span></div>
+      <div class="stat"><span class="sl">Sessione avviata</span><span class="sv" id="s-sess" style="font-size:.9rem">—</span></div>
+      <div class="stat"><span class="sl">Mittenti unici</span><span class="sv" id="s-send">0</span></div>
+    </div>
+
+    <div class="tbl-wrap" id="wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Data / Ora</th><th>Mittente</th>
+          <th>Ricevente</th><th>Messaggio ricevuto</th><th>Messaggio trasmesso</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty" id="empty">
+        <span class="ic">&#9632;</span>
+        <p>In attesa di comunicazioni...</p>
+      </div>
     </div>
   </div>
 
-  <div class="rbar">
-    <span class="rlbl">Risposta &#9654;</span>
-    <input id="rinp" class="rinp" type="text"
-      placeholder="Scrivi una risposta e premi Invio..."/>
-    <button id="rbtn" class="rbtn">Invia</button>
-    <span id="rsent" class="rsent">✓ inviato</span>
+  <!-- ── Vista CHAT ─────────────────────────────────────────────── -->
+  <div class="view" id="view-chat">
+    <div class="chat-wrap" id="chat-wrap">
+      <div class="chat-empty" id="chat-empty">
+        <span class="ic">&#9998;</span>
+        <p>Nessun messaggio ancora</p>
+      </div>
+    </div>
+    <div class="rbar">
+      <span class="rlbl">Chat &#9654;</span>
+      <input id="cinp" class="rinp" type="text"
+        placeholder="Scrivi un messaggio e premi Invio..."/>
+      <button id="cbtn" class="rbtn">Invia</button>
+      <span id="csent" class="rsent">✓ inviato</span>
+    </div>
   </div>
 
   <footer>
@@ -220,21 +301,79 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   </footer>
 </div>
 
+<!-- ── Overlay: richiesta nome (una sola volta per sessione browser) ── -->
+<div class="overlay" id="name-overlay">
+  <div class="name-card">
+    <h2>Chi sei?</h2>
+    <p>Inserisci un nome per identificarti nella chat.<br/>Te lo richiederemo solo in questa sessione.</p>
+    <input id="name-input" type="text" placeholder="Es. Base, Auto 1, Marco..." maxlength="40"/>
+    <button id="name-confirm">Continua</button>
+  </div>
+</div>
+
 <script>
   // ── Config iniettata dal server ──────────────────────────────────
   const SESSION_ID = "__SESSION_ID__";
   const qs = (extra) => `session=${encodeURIComponent(SESSION_ID)}${extra || ''}`;
+
+  // ── Nome utente chat (fisso per la sessione di navigazione) ──────
+  const NAME_KEY = 'radiolog_chat_name_' + SESSION_ID;
+  let chatName = sessionStorage.getItem(NAME_KEY) || '';
+
+  const overlay     = document.getElementById('name-overlay');
+  const nameInput    = document.getElementById('name-input');
+  const nameConfirm  = document.getElementById('name-confirm');
+
+  function ensureName(callback){
+    if(chatName){ callback(); return; }
+    overlay.classList.add('show');
+    nameInput.focus();
+    const confirm = () => {
+      const v = nameInput.value.trim();
+      if(!v) return;
+      chatName = v;
+      sessionStorage.setItem(NAME_KEY, chatName);
+      overlay.classList.remove('show');
+      callback();
+    };
+    nameConfirm.onclick = confirm;
+    nameInput.onkeydown = (e) => { if(e.key === 'Enter') confirm(); };
+  }
+
+  // ── Tabs ─────────────────────────────────────────────────────────
+  const tabs  = document.querySelectorAll('.tab');
+  const views = { log: document.getElementById('view-log'), chat: document.getElementById('view-chat') };
+  const chatBadge = document.getElementById('chat-badge');
+  let unreadChat = 0;
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      Object.values(views).forEach(v => v.classList.remove('active'));
+      views[tab.dataset.view].classList.add('active');
+      if(tab.dataset.view === 'chat'){
+        unreadChat = 0;
+        chatBadge.style.display = 'none';
+        ensureName(() => {});
+        chatWrap.scrollTop = chatWrap.scrollHeight;
+      }
+    });
+  });
 
   // ── Stato ────────────────────────────────────────────────────────
   let logs = [], senders = new Set(), sessionStart = null;
   const tbody = document.getElementById('tbody');
   const empty = document.getElementById('empty');
   const wrap  = document.getElementById('wrap');
-  const rinp  = document.getElementById('rinp');
-  const rbtn  = document.getElementById('rbtn');
-  const rsent = document.getElementById('rsent');
   const statusEl   = document.getElementById('status');
   const statusText = document.getElementById('status-text');
+
+  const chatWrap  = document.getElementById('chat-wrap');
+  const chatEmpty = document.getElementById('chat-empty');
+  const cinp = document.getElementById('cinp');
+  const cbtn = document.getElementById('cbtn');
+  const csent = document.getElementById('csent');
 
   // ── Clock ────────────────────────────────────────────────────────
   function tick(){
@@ -243,7 +382,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
   tick(); setInterval(tick, 1000);
 
-  // ── Helpers ──────────────────────────────────────────────────────
+  // ── Helpers log ──────────────────────────────────────────────────
   function flash(el){
     el.classList.add('flash');
     setTimeout(()=>el.classList.remove('flash'), 600);
@@ -280,42 +419,58 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     if(animate) wrap.scrollTop = wrap.scrollHeight;
   }
 
-  // ── Risposta ─────────────────────────────────────────────────────
-  // L'invio è un semplice POST, indipendente dallo stato dello stream SSE:
-  // il campo resta sempre utilizzabile, anche se il "LIVE" è momentaneamente
-  // disconnesso (es. telefono che ha bloccato lo schermo).
-  rinp.disabled = false;
-  rbtn.disabled = false;
-
-  function showSendFeedback(ok, message){
-    rsent.textContent = ok ? '✓ inviato' : ('✗ ' + message);
-    rsent.style.color = ok ? 'var(--green)' : 'var(--red)';
-    rsent.classList.add('show');
-    setTimeout(()=>rsent.classList.remove('show'), ok ? 2000 : 4000);
+  // ── Helpers chat ─────────────────────────────────────────────────
+  function addChatMessage(entry, animate=true){
+    chatEmpty.style.display = 'none';
+    const div = document.createElement('div');
+    const cls = entry.origin === 'locale' ? 'local' : 'remote';
+    div.className = 'msg ' + cls;
+    if(!animate) div.style.animation = 'none';
+    const when = (entry.date_time || '').slice(11,19);
+    div.innerHTML = `<span class="who">${entry.sender}<span class="when">${when}</span></span>${entry.text}`;
+    chatWrap.appendChild(div);
+    if(animate){
+      chatWrap.scrollTop = chatWrap.scrollHeight;
+      if(entry.origin !== 'locale' && !views.chat.classList.contains('active')){
+        unreadChat++;
+        chatBadge.textContent = unreadChat;
+        chatBadge.style.display = 'inline-block';
+      }
+    }
   }
 
-  function sendResponse(){
-    const text = rinp.value.trim();
+  function showChatFeedback(ok, message){
+    csent.textContent = ok ? '✓ inviato' : ('✗ ' + message);
+    csent.style.color = ok ? 'var(--green)' : 'var(--red)';
+    csent.classList.add('show');
+    setTimeout(()=>csent.classList.remove('show'), ok ? 2000 : 4000);
+  }
+
+  function sendChatMessage(){
+    const text = cinp.value.trim();
     if(!text) return;
-    rbtn.disabled = true;
-    fetch(`/api/respond?${qs()}`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text})
-    })
-      .then(r => {
-        if(!r.ok) throw new Error('risposta server: ' + r.status);
-        rinp.value = '';
-        showSendFeedback(true);
+    ensureName(() => {
+      cbtn.disabled = true;
+      fetch(`/api/chat/send?${qs()}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: chatName, text})
       })
-      .catch(err => {
-        showSendFeedback(false, 'invio fallito, riprova');
-        console.error('Errore invio risposta:', err);
-      })
-      .finally(() => { rbtn.disabled = false; });
+        .then(r => {
+          if(!r.ok) throw new Error('risposta server: ' + r.status);
+          cinp.value = '';
+          showChatFeedback(true);
+        })
+        .catch(err => {
+          showChatFeedback(false, 'invio fallito, riprova');
+          console.error('Errore invio chat:', err);
+        })
+        .finally(() => { cbtn.disabled = false; });
+    });
   }
-  rbtn.addEventListener('click', sendResponse);
-  rinp.addEventListener('keydown', e=>{ if(e.key==='Enter') sendResponse(); });
+  cbtn.addEventListener('click', sendChatMessage);
+  cinp.addEventListener('keydown', e=>{ if(e.key==='Enter') sendChatMessage(); });
+  cinp.addEventListener('focus', () => ensureName(() => {}));
 
   // ── Caricamento iniziale ────────────────────────────────────────
   fetch(`/api/logs?${qs()}`)
@@ -324,6 +479,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       data.forEach(entry => { logs.push(entry); addRow(entry, false); });
       updateStats();
     })
+    .catch(() => {});
+
+  fetch(`/api/chat?${qs()}`)
+    .then(r => r.ok ? r.json() : [])
+    .then(data => { data.forEach(entry => addChatMessage(entry, false)); })
     .catch(() => {});
 
   // ── Aggiornamenti in tempo reale via Server-Sent Events ──────────
@@ -338,16 +498,20 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     es.onmessage = (ev) => {
       if(!ev.data) return;
       const entry = JSON.parse(ev.data);
-      logs.push(entry);
-      addRow(entry, true);
-      updateStats();
+      if(entry.type === 'chat'){
+        addChatMessage(entry, true);
+      } else {
+        logs.push(entry);
+        addRow(entry, true);
+        updateStats();
+      }
     };
 
     es.onerror = () => {
       statusEl.className = 'pill dead';
       statusText.textContent = 'DISCONNESSO';
       // EventSource riprova automaticamente la connessione;
-      // l'invio risposte resta comunque attivo (POST indipendente).
+      // l'invio chat resta comunque attivo (POST indipendente).
     };
   }
   connectStream();
@@ -364,41 +528,48 @@ class WebDashboard:
     Dashboard web in tempo reale — completamente locale.
 
     Un server Flask (in un thread daemon) serve la pagina e sincronizza
-    log/risposte via Server-Sent Events. Nessun dato lascia la rete locale.
+    log e chat via Server-Sent Events. Nessun dato lascia la rete locale.
 
     Endpoint esposti:
-      GET  /?session=...           → pagina HTML della dashboard
-      GET  /api/logs?session=...   → log accumulato finora (JSON)
-      GET  /stream?session=...     → stream SSE delle nuove voci
-      POST /api/respond?session=...→ invia una risposta dal browser al tool
-      GET  /health                 → stato del servizio
+      GET  /?session=...              → pagina HTML della dashboard
+      GET  /api/logs?session=...      → log radio accumulato finora (JSON)
+      GET  /api/chat?session=...      → cronologia chat accumulata (JSON)
+      GET  /stream?session=...        → stream SSE (voci di log e messaggi chat)
+      POST /api/chat/send?session=... → invia un messaggio chat dal browser
+      GET  /health                    → stato del servizio
 
     Utilizzo::
 
-        dashboard = WebDashboard(port=8080, on_response=mia_funzione)
+        dashboard = WebDashboard(port=8080, on_message=mia_funzione)
         dashboard.start()
-        print(dashboard.link)          # apri nel browser (stessa rete locale)
-        dashboard.push_entry(entry)    # invia una voce
+        print(dashboard.link)                           # apri nel browser
+        dashboard.push_entry(entry)                      # voce di log
+        dashboard.push_chat_message("Operatore", "ciao")  # messaggio chat locale
     """
 
     def __init__(
         self,
-        session_id:  Optional[str]                    = None,
-        on_response: Optional[Callable[[str], None]]  = None,
-        port:        int                              = 8080,
-        host:        str                              = "0.0.0.0",
-        token:       Optional[str]                    = None,
-        public_host: Optional[str]                    = None,
+        session_id:  Optional[str]                        = None,
+        on_message:  Optional[Callable[[str, str], None]] = None,
+        port:        int                                  = 8080,
+        host:        str                                  = "0.0.0.0",
+        token:       Optional[str]                        = None,
+        public_host: Optional[str]                        = None,
+        on_response: Optional[Callable[[str], None]]      = None,  # legacy, vedi set_response_callback
         **_ignored,   # assorbe eventuali parametri legacy (es. firebase_*) senza errori
     ):
         # Usa token come session_id se fornito → stesso link ad ogni riavvio
-        self._session_id  = session_id or token or secrets.token_urlsafe(20)
-        self._on_response = on_response
+        self._session_id = session_id or token or secrets.token_urlsafe(20)
+        self._on_message = on_message
+        if on_response and not on_message:
+            # Compatibilità con versioni precedenti (callback a un solo argomento)
+            self._on_message = lambda sender, text: on_response(text)
         self._port        = port
         self._host        = host
         self._public_host = public_host
 
         self._log:         list[dict]        = []
+        self._chat:        list[dict]        = []
         self._lock                            = threading.Lock()
         self._subscribers: list[queue.Queue]  = []
 
@@ -415,13 +586,14 @@ class WebDashboard:
 
     def push_entry(self, entry: tuple) -> None:
         """
-        Aggiunge una voce al log e la invia in tempo reale a tutti i
+        Aggiunge una voce al log radio e la invia in tempo reale a tutti i
         browser collegati (via Server-Sent Events).
 
         Args:
             entry: tupla (date_time, sender, receiver, msg_received, msg_sent)
         """
         record = {
+            "type"        : "log",
             "date_time"   : entry[0],
             "sender"      : entry[1],
             "receiver"    : entry[2],
@@ -435,14 +607,46 @@ class WebDashboard:
         for q in subscribers:
             q.put(record)
 
+    def push_chat_message(self, sender: str, text: str, origin: str = "locale") -> None:
+        """
+        Aggiunge un messaggio alla chat e lo invia in tempo reale a tutti i
+        browser collegati (via Server-Sent Events).
+
+        Args:
+            sender: nome di chi scrive (operatore locale o utente remoto)
+            text:   contenuto del messaggio
+            origin: "locale" (dall'app Tkinter) o "remoto" (dal browser)
+        """
+        record = {
+            "type"     : "chat",
+            "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sender"   : sender,
+            "text"     : text,
+            "origin"   : origin,
+        }
+        with self._lock:
+            self._chat.append(record)
+            subscribers = list(self._subscribers)
+
+        for q in subscribers:
+            q.put(record)
+
+    def set_message_callback(self, callback: Callable[[str, str], None]) -> None:
+        """Imposta o aggiorna il callback (sender, text) per i messaggi chat dal browser."""
+        self._on_message = callback
+
     def set_response_callback(self, callback: Callable[[str], None]) -> None:
-        """Imposta o aggiorna il callback per le risposte dal browser."""
-        self._on_response = callback
+        """
+        Compatibilità con versioni precedenti: registra un callback che
+        riceve solo il testo (senza nome mittente). Preferire set_message_callback.
+        """
+        self._on_message = lambda sender, text: callback(text)
 
     def clear_session(self) -> None:
-        """Svuota tutti i dati della sessione corrente (solo in memoria locale)."""
+        """Svuota log e chat della sessione corrente (solo in memoria locale)."""
         with self._lock:
             self._log.clear()
+            self._chat.clear()
 
     @property
     def session_id(self) -> str:
@@ -503,6 +707,13 @@ class WebDashboard:
             with self._lock:
                 return jsonify(list(self._log))
 
+        @app.route("/api/chat")
+        def api_chat():
+            if not self._authorized():
+                return Response(status=401)
+            with self._lock:
+                return jsonify(list(self._chat))
+
         @app.route("/stream")
         def stream():
             if not self._authorized():
@@ -533,14 +744,24 @@ class WebDashboard:
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        @app.route("/api/respond", methods=["POST"])
-        def api_respond():
+        @app.route("/api/chat/send", methods=["POST"])
+        def api_chat_send():
             if not self._authorized():
                 return Response(status=401)
             data = request.get_json(silent=True) or {}
+            name = str(data.get("name", "")).strip()[:40] or "Remoto"
             text = str(data.get("text", "")).strip()
-            if text and self._on_response:
-                self._on_response(text)
+            if not text:
+                return jsonify({"ok": False, "error": "testo vuoto"}), 400
+
+            # Rende il messaggio visibile in tempo reale a tutti i browser
+            # collegati (incluso chi lo ha scritto, per coerenza multi-dispositivo).
+            self.push_chat_message(name, text, origin="remoto")
+
+            # Inoltra all'app Tkinter (tramite callback thread-safe lato chiamante).
+            if self._on_message:
+                self._on_message(name, text)
+
             return jsonify({"ok": True})
 
         @app.route("/health")
