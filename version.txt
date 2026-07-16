@@ -17,12 +17,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Jacopo'),
             StringStruct('FileDescription', 'Registro comunicazioni radio'),
-            StringStruct('FileVersion', '6.0.0'),
+            StringStruct('FileVersion', '7.0.0'),
             StringStruct('InternalName', 'PCBRLT'),
             StringStruct('LegalCopyright', '© 2026 JacopoMarzio'),
             StringStruct('OriginalFilename', 'Registro_comunicazioni_radio.exe'),
             StringStruct('ProductName', 'Brogliaccio_comunicazioni_radio'),
-            StringStruct('ProductVersion', '6.0.0')
+            StringStruct('ProductVersion', '7.0.0')
           ]
         )
       ]

@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 report_creator.py
-Creazione di report PDF e XLSX per il log delle comunicazioni radio
-e per la chat. Ogni report viene salvato sia nella directory scelta
-dall'utente sia in una cartella di backup locale fissa accanto all'app
-(così una copia resta sempre disponibile in locale, indipendentemente
-da dove è stata scelta la destinazione principale: Drive, esterna, ecc.).
+Creazione di report PDF e XLSX per il log delle comunicazioni radio,
+la chat e le assegnazioni apparati (TLC Point), oltre ai fogli QR
+stampabili per etichettare fisicamente gli apparati.
+
+Ogni report viene salvato sia nella directory scelta dall'utente sia in
+una cartella di backup locale fissa accanto all'app (così una copia
+resta sempre disponibile in locale, indipendentemente da dove è stata
+scelta la destinazione principale: Drive, esterna, ecc.).
 """
 
 import os
@@ -17,6 +20,12 @@ from fpdf import FPDF
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font
+
+try:
+    import qrcode
+    _QRCODE_AVAILABLE = True
+except ImportError:
+    _QRCODE_AVAILABLE = False
 
 
 class ReportCreator:
@@ -366,3 +375,168 @@ class ReportCreator:
             except Exception as e:
                 print(f"Errore salvataggio XLSX in {dest_dir}: {e}")
         return primary_path
+
+    # ------------------------------------------------------------------
+    # PDF/XLSX — report assegnazioni apparati (TLC Point)
+    # ------------------------------------------------------------------
+
+    def create_assignments_pdf(self, operator: str, login_datetime: str,
+                               assignments: list, directory: str,
+                               n_files: int, logo_path: str) -> str:
+        """
+        Genera il report PDF delle assegnazioni apparati correnti
+        (fotografia dello stato "chi ha cosa" al momento della generazione)
+        e lo salva sia nella directory indicata sia nel backup locale fisso.
+        Ogni voce di assignments è una tupla
+        (codice, modello, numero_seriale, assegnato_a, alias, data_assegnazione).
+        """
+        headers    = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "Dal"]
+        col_widths = [30, 55, 40, 55, 40, 55]
+        align_from = 2
+
+        title = f"Rapporto assegnazioni apparati n° {n_files}/{login_datetime[:4]}"
+        file_name = (
+            f"rapporto_assegnazioni_"
+            f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.pdf"
+        )
+        pdf = self._build_table_pdf(
+            title, operator, "Assegnazione apparati radio", logo_path,
+            headers, col_widths, assignments, align_from
+        )
+        return self._save_pdf_multi(pdf, directory, file_name)
+
+    def create_assignments_xlsx(self, operator: str, login_datetime: str,
+                                assignments: list, directory: str,
+                                n_files: int, logo_path: str) -> str:
+        """
+        Genera il report XLSX delle assegnazioni apparati correnti e lo
+        salva sia nella directory indicata sia nel backup locale fisso.
+        """
+        headers = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "Dal"]
+        file_name = (
+            f"rapporto_assegnazioni_"
+            f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.xlsx"
+        )
+        wb = self._build_table_xlsx(
+            operator, "Assegnazione apparati radio", login_datetime, n_files,
+            logo_path, headers, assignments
+        )
+        return self._save_xlsx_multi(wb, directory, file_name)
+
+    # ------------------------------------------------------------------
+    # PDF/XLSX — report log movimenti TLC Point (carico/scarico)
+    # ------------------------------------------------------------------
+
+    def create_tlc_log_pdf(self, operator: str, login_datetime: str,
+                           movements: list, directory: str,
+                           n_files: int, logo_path: str) -> str:
+        """
+        Genera il report PDF completo dello storico movimenti TLC Point
+        (tutti i carichi/scarichi registrati) e lo salva sia nella directory
+        indicata sia nel backup locale fisso.
+        Ogni voce di movements è una tupla
+        (data_ora, codice, modello, operazione, persona, alias, operatore).
+        """
+        headers    = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias", "Operatore"]
+        col_widths = [40, 30, 45, 35, 45, 35, 45]
+        align_from = 2
+
+        title = f"Rapporto log TLC Point n° {n_files}/{login_datetime[:4]}"
+        file_name = (
+            f"rapporto_tlc_point_"
+            f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.pdf"
+        )
+        pdf = self._build_table_pdf(
+            title, operator, "Storico movimenti apparati radio", logo_path,
+            headers, col_widths, movements, align_from
+        )
+        return self._save_pdf_multi(pdf, directory, file_name)
+
+    def create_tlc_log_xlsx(self, operator: str, login_datetime: str,
+                            movements: list, directory: str,
+                            n_files: int, logo_path: str) -> str:
+        """
+        Genera il report XLSX completo dello storico movimenti TLC Point
+        e lo salva sia nella directory indicata sia nel backup locale fisso.
+        """
+        headers = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias", "Operatore"]
+        file_name = (
+            f"rapporto_tlc_point_"
+            f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.xlsx"
+        )
+        wb = self._build_table_xlsx(
+            operator, "Storico movimenti apparati radio", login_datetime, n_files,
+            logo_path, headers, movements
+        )
+        return self._save_xlsx_multi(wb, directory, file_name)
+
+    # ------------------------------------------------------------------
+    # PDF — foglio QR stampabile per etichettare gli apparati
+    # ------------------------------------------------------------------
+
+    def create_qr_sheet_pdf(self, apparati: list, directory: str) -> str:
+        """
+        Genera un foglio PDF (formato A4) con un QR code + etichetta
+        (codice e modello) per ciascun apparato passato, pronto per la
+        stampa e l'applicazione fisica sugli apparati stessi.
+        Salva sia nella directory indicata sia nel backup locale fisso.
+
+        Args:
+            apparati: lista di dict con almeno le chiavi "Codice" e "Modello"
+                     (es. quelli restituiti da EquipmentManager.all_apparati()).
+        """
+        if not _QRCODE_AVAILABLE:
+            raise RuntimeError(
+                "La libreria 'qrcode' non è installata. "
+                "Installala con: pip install qrcode[pil]"
+            )
+        entries = [row for row in apparati if str(row.get("Codice", "")).strip()]
+        if not entries:
+            raise ValueError("Nessun apparato con codice valido da includere nel foglio QR.")
+
+        pdf = FPDF(orientation="P", unit="mm", format="A4")
+        pdf.set_auto_page_break(auto=False)
+
+        cols, rows_per_page = 3, 4
+        page_w, page_h = 210, 297
+        margin_x, top_margin, bottom_margin = 12, 28, 14
+        cell_w = (page_w - 2 * margin_x) / cols
+        cell_h = (page_h - top_margin - bottom_margin) / rows_per_page
+        qr_size = min(cell_w, cell_h) * 0.55
+
+        def _draw_page_header():
+            pdf.set_font("Arial", "B", 14)
+            pdf.set_xy(0, 10)
+            pdf.cell(0, 10, "Etichette QR apparati", align="C")
+
+        for i, row in enumerate(entries):
+            per_page = cols * rows_per_page
+            if i % per_page == 0:
+                pdf.add_page()
+                _draw_page_header()
+
+            pos = i % per_page
+            col = pos % cols
+            r   = pos // cols
+            x = margin_x + col * cell_w
+            y = top_margin + r * cell_h
+
+            codice  = str(row.get("Codice", ""))
+            modello = str(row.get("Modello", "") or "")
+
+            qr_img = qrcode.make(codice)
+            qr_img = qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img
+            qr_x = x + (cell_w - qr_size) / 2
+            pdf.image(qr_img, x=qr_x, y=y, w=qr_size, h=qr_size)
+
+            pdf.set_xy(x, y + qr_size + 2)
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(cell_w, 5, codice, align="C")
+
+            pdf.set_xy(x, y + qr_size + 7)
+            pdf.set_font("Arial", "", 8)
+            pdf.cell(cell_w, 5, textwrap.shorten(modello, width=26, placeholder="..."), align="C")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"foglio_qr_apparati_{timestamp}.pdf"
+        return self._save_pdf_multi(pdf, directory, file_name)

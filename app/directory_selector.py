@@ -11,6 +11,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
+from ui_utils import adaptive_geometry
+
 
 class ConnectionChecker:
     """Verifica la disponibilità della connessione a Internet."""
@@ -97,7 +99,7 @@ class DirectorySelector:
         t = self._t()
         root = tk.Tk()
         root.title(t["window_title"])
-        root.geometry("1200x800")
+        adaptive_geometry(root, 1200, 800, min_w=650, min_h=550)
         root.resizable(True, True)
         self._root = root
 

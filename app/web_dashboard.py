@@ -252,6 +252,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="tabs">
     <div class="tab active" id="tab-log" data-view="log">Log</div>
     <div class="tab" id="tab-chat" data-view="chat">Chat<span class="badge" id="chat-badge" style="display:none">0</span></div>
+    <div class="tab" id="tab-assign" data-view="assign">Assegnazioni<span class="badge" id="assign-badge" style="display:none">0</span></div>
   </div>
 
   <!-- ── Vista LOG ──────────────────────────────────────────────── -->
@@ -292,6 +293,26 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         placeholder="Scrivi un messaggio e premi Invio..."/>
       <button id="cbtn" class="rbtn">Invia</button>
       <span id="csent" class="rsent">✓ inviato</span>
+    </div>
+  </div>
+
+  <!-- ── Vista ASSEGNAZIONI ─────────────────────────────────────── -->
+  <div class="view" id="view-assign">
+    <div class="stats">
+      <div class="stat"><span class="sl">Apparati in carico</span><span class="sv" id="a-tot">0</span></div>
+      <div class="stat"><span class="sl">Aggiornato alle</span><span class="sv" id="a-updated" style="font-size:.9rem">—</span></div>
+    </div>
+    <div class="tbl-wrap" id="assign-wrap">
+      <table>
+        <thead><tr>
+          <th>Codice</th><th>Modello</th><th>Assegnato a</th><th>Alias</th><th>Dal</th>
+        </tr></thead>
+        <tbody id="assign-tbody"></tbody>
+      </table>
+      <div class="empty" id="assign-empty">
+        <span class="ic">&#9633;</span>
+        <p>Nessun apparato attualmente in carico</p>
+      </div>
     </div>
   </div>
 
@@ -342,8 +363,13 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
   // ── Tabs ─────────────────────────────────────────────────────────
   const tabs  = document.querySelectorAll('.tab');
-  const views = { log: document.getElementById('view-log'), chat: document.getElementById('view-chat') };
+  const views = {
+    log: document.getElementById('view-log'),
+    chat: document.getElementById('view-chat'),
+    assign: document.getElementById('view-assign'),
+  };
   const chatBadge = document.getElementById('chat-badge');
+  const assignBadge = document.getElementById('assign-badge');
   let unreadChat = 0;
 
   tabs.forEach(tab => {
@@ -357,6 +383,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         chatBadge.style.display = 'none';
         ensureName(() => {});
         chatWrap.scrollTop = chatWrap.scrollHeight;
+      }
+      if(tab.dataset.view === 'assign'){
+        assignBadge.style.display = 'none';
       }
     });
   });
@@ -374,6 +403,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   const cinp = document.getElementById('cinp');
   const cbtn = document.getElementById('cbtn');
   const csent = document.getElementById('csent');
+
+  const assignTbody = document.getElementById('assign-tbody');
+  const assignEmpty = document.getElementById('assign-empty');
+  const assignTot   = document.getElementById('a-tot');
+  const assignUpdated = document.getElementById('a-updated');
 
   // ── Clock ────────────────────────────────────────────────────────
   function tick(){
@@ -446,6 +480,28 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     setTimeout(()=>csent.classList.remove('show'), ok ? 2000 : 4000);
   }
 
+  // ── Helpers assegnazioni ─────────────────────────────────────────
+  function renderAssignments(items, dateTime){
+    assignTbody.innerHTML = '';
+    assignTot.textContent = items.length;
+    if(dateTime) assignUpdated.textContent = dateTime.slice(11, 19);
+    assignEmpty.style.display = items.length === 0 ? 'flex' : 'none';
+    items.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="cs">${item.codice}</td>
+        <td>${item.modello || '—'}</td>
+        <td class="cr">${item.persona || '—'}</td>
+        <td>${item.alias || '—'}</td>
+        <td class="ct">${item.dal || '—'}</td>`;
+      assignTbody.appendChild(tr);
+    });
+    if(!views.assign.classList.contains('active')){
+      assignBadge.style.display = items.length > 0 ? 'inline-block' : 'none';
+      if(items.length > 0) assignBadge.textContent = items.length;
+    }
+  }
+
   function sendChatMessage(){
     const text = cinp.value.trim();
     if(!text) return;
@@ -486,6 +542,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     .then(data => { data.forEach(entry => addChatMessage(entry, false)); })
     .catch(() => {});
 
+  fetch(`/api/assignments?${qs()}`)
+    .then(r => r.ok ? r.json() : [])
+    .then(data => renderAssignments(data, new Date().toISOString()))
+    .catch(() => {});
+
   // ── Aggiornamenti in tempo reale via Server-Sent Events ──────────
   function connectStream(){
     const es = new EventSource(`/stream?${qs()}`);
@@ -500,6 +561,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       const entry = JSON.parse(ev.data);
       if(entry.type === 'chat'){
         addChatMessage(entry, true);
+      } else if(entry.type === 'assignments'){
+        renderAssignments(entry.items || [], entry.date_time);
       } else {
         logs.push(entry);
         addRow(entry, true);
@@ -570,6 +633,7 @@ class WebDashboard:
 
         self._log:         list[dict]        = []
         self._chat:        list[dict]        = []
+        self._assignments: list[dict]        = []
         self._lock                            = threading.Lock()
         self._subscribers: list[queue.Queue]  = []
 
@@ -626,6 +690,29 @@ class WebDashboard:
         }
         with self._lock:
             self._chat.append(record)
+            subscribers = list(self._subscribers)
+
+        for q in subscribers:
+            q.put(record)
+
+    def push_assignments(self, assignments: list) -> None:
+        """
+        Aggiorna il riepilogo delle assegnazioni apparati correnti (TLC Point)
+        e lo invia in tempo reale a tutti i browser collegati. È una
+        "fotografia" completa dello stato attuale (sostituisce la precedente,
+        non si accumula come log/chat).
+
+        Args:
+            assignments: lista di dict con chiavi "codice", "modello",
+                        "persona", "dal" (uno per ogni apparato in carico).
+        """
+        record = {
+            "type"     : "assignments",
+            "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "items"    : list(assignments),
+        }
+        with self._lock:
+            self._assignments = list(assignments)
             subscribers = list(self._subscribers)
 
         for q in subscribers:
@@ -713,6 +800,13 @@ class WebDashboard:
                 return Response(status=401)
             with self._lock:
                 return jsonify(list(self._chat))
+
+        @app.route("/api/assignments")
+        def api_assignments():
+            if not self._authorized():
+                return Response(status=401)
+            with self._lock:
+                return jsonify(list(self._assignments))
 
         @app.route("/stream")
         def stream():

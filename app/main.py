@@ -20,6 +20,44 @@ from datetime import datetime
 from pathlib import Path
 
 
+# ── Sicurezza I/O standard ────────────────────────────────────────────────────
+
+def _ensure_safe_stdio() -> None:
+    """
+    Garantisce che sys.stdout/stderr esistano sempre e non sollevino mai
+    un'eccezione per problemi di codifica. Protegge da due problemi
+    frequenti in produzione, specialmente su Windows:
+
+    1. Console con codifica legacy (es. cp1252, tipica dei terminali
+       Windows non-UTF-8): un print() con un'emoji o un carattere come
+       "→" solleva UnicodeEncodeError e manda in crash l'intera app
+       (è quanto capitato con "📡" nel messaggio di avvio della dashboard).
+
+    2. Eseguibile PyInstaller in modalità --windowed (nessuna console):
+       sys.stdout/sys.stderr possono essere None, quindi qualunque
+       print() nel codice solleverebbe AttributeError.
+
+    Va chiamata il prima possibile, prima che qualunque altro modulo
+    dell'app esegua un print().
+    """
+    import io
+
+    if sys.stdout is None:
+        sys.stdout = io.StringIO()
+    if sys.stderr is None:
+        sys.stderr = io.StringIO()
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_ensure_safe_stdio()
+
+
 # ── Path base (script normale vs eseguibile PyInstaller) ─────────────────────
 
 def _base_path() -> Path:
@@ -142,6 +180,11 @@ class Application:
         logo_path = _resolve_asset(cfg["Logo_path"])
         flag_list = _resolve_flag_list(cfg["Flags_logo"])
 
+        # ── Database apparati (TLC Point) ─────────────────────────────
+        # File Excel con anagrafica apparati e storico carico/scarico.
+        # Se non esiste viene creato automaticamente al primo avvio.
+        apparati_db_path = str(BASE / cfg.get("Apparati_db_path", "apparati.xlsx"))
+
         # ── Token sessione ───────────────────────────────────────────
         # Usato come session_id della dashboard. Se fisso nel configurator
         # il link non cambia mai tra un riavvio e l'altro.
@@ -178,13 +221,14 @@ class Application:
 
         # 5. Interfaccia principale
         interface = RadioLogInterface(
-            login_datetime = login_dt,
-            directory      = directory,
-            n_files        = n_protocol,
-            logo_path      = logo_path,
-            flag_list      = flag_list,
-            program_title  = program_title,
-            dashboard      = dashboard,  # None se remote_enabled = false
+            login_datetime   = login_dt,
+            directory        = directory,
+            n_files          = n_protocol,
+            logo_path        = logo_path,
+            flag_list        = flag_list,
+            program_title    = program_title,
+            dashboard        = dashboard,  # None se remote_enabled = false
+            apparati_db_path = apparati_db_path,
         )
 
         # 6. Wiring bidirezionale della chat (solo se la dashboard locale è attiva)

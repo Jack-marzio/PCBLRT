@@ -15,6 +15,8 @@ from PIL import Image, ImageTk
 from directory_selector import ConnectionChecker
 from recovery_manager import RecoveryManager
 from report_creator import ReportCreator
+from tlc_point import TLCPointPanel
+from ui_utils import adaptive_geometry, add_vscrollbar, maximize_if_small_screen
 from web_dashboard import WebDashboard
 
 
@@ -39,7 +41,7 @@ class SplashScreen:
         """Apre la splash screen e attende che si chiuda."""
         root = tk.Tk()
         root.title("ProcivBesRadioTeamTool")
-        root.geometry("1200x800")
+        adaptive_geometry(root, 1200, 800, min_w=500, min_h=400)
         root.resizable(True, True)
 
         try:
@@ -123,6 +125,8 @@ class RadioLogInterface:
             "dashboard_link"  : "Link dashboard:",
             "copy_link"       : "Copia link",
             "link_copied"     : "Link copiato!",
+            "tab_log"         : "Log Comunicazioni",
+            "tab_tlc"         : "TLC Point",
         },
         "en": {
             "operator"        : "Operator:",
@@ -158,6 +162,8 @@ class RadioLogInterface:
             "dashboard_link"  : "Dashboard link:",
             "copy_link"       : "Copy link",
             "link_copied"     : "Link copied!",
+            "tab_log"         : "Communication Log",
+            "tab_tlc"         : "TLC Point",
         },
     }
 
@@ -172,6 +178,7 @@ class RadioLogInterface:
         flag_list: list[str],
         program_title: str = "Radio Communication Log",
         dashboard: WebDashboard | None = None,
+        apparati_db_path: str = "apparati.xlsx",
     ):
         self._login_datetime   = login_datetime
         self._directory        = directory
@@ -179,6 +186,7 @@ class RadioLogInterface:
         self._logo_path        = logo_path
         self._flag_list        = flag_list
         self._program_title    = program_title
+        self._apparati_db_path = apparati_db_path
         self._lang             = "it"
         self._communication_log: list[tuple] = []
         self._chat_log: list[tuple] = []  # (date_time, sender, origin, text)
@@ -211,6 +219,14 @@ class RadioLogInterface:
         """
         self._remote_queue.put((sender, text))
 
+    def _push_assignments_to_dashboard(self, assignments: list) -> None:
+        """
+        Inoltra il riepilogo assegnazioni apparati correnti alla dashboard
+        web (se attiva), chiamato da TLCPointPanel dopo ogni carico/scarico.
+        """
+        if self._dashboard:
+            self._dashboard.push_assignments(assignments)
+
     # ------------------------------------------------------------------
     # Window construction
     # ------------------------------------------------------------------
@@ -218,16 +234,29 @@ class RadioLogInterface:
     def _build_window(self) -> None:
         root = tk.Tk()
         root.title(self._program_title)
-        root.geometry("1200x900")
+        adaptive_geometry(root, 1300, 950, min_w=900, min_h=650)
         root.resizable(True, True)
+        # Su schermi piccoli (netbook, monitor secondari) massimizza subito:
+        # evita che pulsanti e pannelli restino fuori dall'area visibile.
+        maximize_if_small_screen(root)
         self._root = root
 
         self._build_top_bar(root)
         self._build_led(root)
-        self._build_input_frame(root)
 
-        # Pannello principale: log + risposte remote affiancati
-        panels = tk.Frame(root)
+        notebook = ttk.Notebook(root)
+        notebook.pack(fill="both", expand=True, padx=10, pady=(5, 0))
+        self._notebook = notebook
+
+        tab_log = tk.Frame(notebook)
+        tab_tlc = tk.Frame(notebook)
+        notebook.add(tab_log, text=self._t()["tab_log"])
+        notebook.add(tab_tlc, text=self._t()["tab_tlc"])
+
+        # ── Scheda "Log Comunicazioni" (contenuto storico dell'app) ──
+        self._build_input_frame(tab_log)
+
+        panels = tk.Frame(tab_log)
         panels.pack(pady=5, padx=20, fill="both", expand=True)
         panels.columnconfigure(0, weight=3)
         panels.columnconfigure(1, weight=1)
@@ -235,9 +264,21 @@ class RadioLogInterface:
         self._build_listbox(panels)
         self._build_chat_panel(panels)
 
-        self._build_dashboard_bar(root)
-        self._build_buttons(root)
-        self._build_flags(root)
+        self._build_dashboard_bar(tab_log)
+        self._build_buttons(tab_log)
+        self._build_flags(tab_log)
+
+        # ── Scheda "TLC Point" (carico/scarico apparati) ─────────────
+        self._tlc_panel = TLCPointPanel(
+            tab_tlc,
+            db_path=self._apparati_db_path,
+            get_operator=lambda: self._entry_operator.get(),
+            lang=self._lang,
+            directory=self._directory,
+            logo_path=self._logo_path,
+            push_assignments=self._push_assignments_to_dashboard,
+        )
+        self._tlc_panel.pack(fill="both", expand=True)
 
         # Avvia il polling periodico della coda risposte remote.
         # Va schedulato qui (thread principale) e non richiamato dal thread
@@ -322,14 +363,17 @@ class RadioLogInterface:
         """
         frame = tk.Frame(parent)
         frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
 
         self._listbox_label = tk.Label(
             frame, text=self._t()["listbox_header"], font=("Helvetica", 12, "bold")
         )
-        self._listbox_label.pack(anchor="w")
+        self._listbox_label.grid(row=0, column=0, columnspan=2, sticky="w")
 
         self._listbox = tk.Listbox(frame, width=80, height=10)
-        self._listbox.pack(fill="both", expand=True, pady=5)
+        self._listbox.grid(row=1, column=0, sticky="nsew", pady=5)
+        add_vscrollbar(frame, self._listbox)
 
         # Binding globale sulla finestra: frecce spostano il cursore nel listbox
         # indipendentemente da dove sia il focus in quel momento.
@@ -359,7 +403,8 @@ class RadioLogInterface:
             selectbackground="#0d3b66",
             font=("Courier", 9)
         )
-        self._chat_listbox.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+        self._chat_listbox.grid(row=1, column=0, sticky="nsew", padx=(5, 0), pady=5)
+        add_vscrollbar(frame, self._chat_listbox)
 
         self._entry_chat = ttk.Entry(frame)
         self._entry_chat.grid(row=2, column=0, sticky="ew", padx=(5, 0), pady=(0, 5))
@@ -543,6 +588,9 @@ class RadioLogInterface:
         self._btn_add_log.config(text=t["add_log"])
         self._btn_gen_pdf.config(text=t["generate_pdf"])
         self._btn_chat_send.config(text=t["chat_send"])
+        self._notebook.tab(0, text=t["tab_log"])
+        self._notebook.tab(1, text=t["tab_tlc"])
+        self._tlc_panel.set_language(lang)
         for key in ("operator", "event", "manual_datetime",
                     "sender", "receiver", "msg_received", "msg_sent"):
             self._labels[key].config(text=t[key])
