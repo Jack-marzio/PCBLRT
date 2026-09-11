@@ -1,8 +1,12 @@
 Program_title=Registro delle comunicazioni radio
-Firmware_version=7.0
+Firmware_version=8.0
 Drive_path=G:\Il mio Drive\TLC\LOG  RADIO
 Logo_path=assets\logo_provincia.png
 Flags_logo=[assets\it.png, assets\uk.png]
 Proprieties=MODULO TLC VARESE
 Remote_enabled=true
 WS_TOKEN=radiolog-tlcvarese-2026
+Firebase_database_url=https://tlcvarese-default-rtdb.europe-west1.firebasedatabase.app
+Admin_password_hash=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+Apparati_db_path=C:/Users/Jacopo/Downloads/Inventario Radio Sala Radio.xlsx
+Web_dashboard_port=8080

@@ -305,7 +305,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="tbl-wrap" id="assign-wrap">
       <table>
         <thead><tr>
-          <th>Codice</th><th>Modello</th><th>Assegnato a</th><th>Alias</th><th>Dal</th>
+          <th>Codice</th><th>Modello</th><th>Assegnato a</th><th>Alias</th><th>ODV</th><th>Cellulare</th><th>Dal</th>
         </tr></thead>
         <tbody id="assign-tbody"></tbody>
       </table>
@@ -493,6 +493,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         <td>${item.modello || '—'}</td>
         <td class="cr">${item.persona || '—'}</td>
         <td>${item.alias || '—'}</td>
+        <td>${item.odv || '—'}</td>
+        <td>${item.cellulare || '—'}</td>
         <td class="ct">${item.dal || '—'}</td>`;
       assignTbody.appendChild(tr);
     });
@@ -703,8 +705,8 @@ class WebDashboard:
         non si accumula come log/chat).
 
         Args:
-            assignments: lista di dict con chiavi "codice", "modello",
-                        "persona", "dal" (uno per ogni apparato in carico).
+            assignments: lista di dict con chiavi "codice", "modello", "persona",
+                        "alias", "odv", "cellulare", "dal" (uno per ogni apparato in carico).
         """
         record = {
             "type"     : "assignments",

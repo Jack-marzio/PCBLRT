@@ -187,11 +187,11 @@ class ReportCreator:
             def header(self):
                 if hasattr(self, "logo_path") and os.path.exists(self.logo_path):
                     self.image(self.logo_path, 10, 8, 25)
-                self.set_font("Arial", "B", 16)
+                self.set_font("Helvetica", "B", 16)
                 self.set_xy(0, 15)
                 self.cell(0, 10, self.title_report, border=0, ln=True, align="C")
                 self.ln(10)
-                self.set_font("Arial", "", 10)
+                self.set_font("Helvetica", "", 10)
                 self.cell(0, 6, f"Operatore: {self.operator}", ln=True)
                 self.cell(0, 6, f"Evento: {self.event}", ln=True)
                 self.ln(5)
@@ -199,11 +199,11 @@ class ReportCreator:
 
             def footer(self):
                 self.set_y(-12)
-                self.set_font("Arial", "I", 8)
+                self.set_font("Helvetica", "I", 8)
                 self.cell(0, 5, f"Pagina {self.page_no()}", align="C")
 
             def _draw_table_header(self):
-                self.set_font("Arial", "B", 9)
+                self.set_font("Helvetica", "B", 9)
                 self.set_fill_color(230, 230, 230)
                 for w, h in zip(self.COL_WIDTHS, self.HEADERS):
                     self.cell(w, 8, h, border=1, align="C", fill=True)
@@ -215,7 +215,7 @@ class ReportCreator:
         pdf.event        = event
         pdf.title_report = title
         pdf.add_page()
-        pdf.set_font("Arial", "", 9)
+        pdf.set_font("Helvetica", "", 9)
 
         line_height = 5
 
@@ -388,10 +388,10 @@ class ReportCreator:
         (fotografia dello stato "chi ha cosa" al momento della generazione)
         e lo salva sia nella directory indicata sia nel backup locale fisso.
         Ogni voce di assignments è una tupla
-        (codice, modello, numero_seriale, assegnato_a, alias, data_assegnazione).
+        (codice, modello, numero_seriale, assegnato_a, alias, odv, cellulare, data_assegnazione).
         """
-        headers    = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "Dal"]
-        col_widths = [30, 55, 40, 55, 40, 55]
+        headers    = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "ODV", "Cellulare", "Dal"]
+        col_widths = [22, 42, 28, 40, 28, 32, 32, 45]
         align_from = 2
 
         title = f"Rapporto assegnazioni apparati n° {n_files}/{login_datetime[:4]}"
@@ -412,7 +412,7 @@ class ReportCreator:
         Genera il report XLSX delle assegnazioni apparati correnti e lo
         salva sia nella directory indicata sia nel backup locale fisso.
         """
-        headers = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "Dal"]
+        headers = ["Codice", "Modello", "N. Seriale", "Assegnato a", "Alias", "ODV", "Cellulare", "Dal"]
         file_name = (
             f"rapporto_assegnazioni_"
             f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.xlsx"
@@ -435,10 +435,11 @@ class ReportCreator:
         (tutti i carichi/scarichi registrati) e lo salva sia nella directory
         indicata sia nel backup locale fisso.
         Ogni voce di movements è una tupla
-        (data_ora, codice, modello, operazione, persona, alias, operatore).
+        (data_ora, codice, modello, operazione, persona, alias, odv, cellulare, operatore).
         """
-        headers    = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias", "Operatore"]
-        col_widths = [40, 30, 45, 35, 45, 35, 45]
+        headers    = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias",
+                     "ODV", "Cellulare", "Operatore"]
+        col_widths = [32, 22, 32, 24, 30, 26, 28, 30, 32]
         align_from = 2
 
         title = f"Rapporto log TLC Point n° {n_files}/{login_datetime[:4]}"
@@ -459,7 +460,8 @@ class ReportCreator:
         Genera il report XLSX completo dello storico movimenti TLC Point
         e lo salva sia nella directory indicata sia nel backup locale fisso.
         """
-        headers = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias", "Operatore"]
+        headers = ["Data/Ora", "Codice", "Modello", "Operazione", "Persona", "Alias",
+                  "ODV", "Cellulare", "Operatore"]
         file_name = (
             f"rapporto_tlc_point_"
             f"{self.sanitize_filename(operator)}_{n_files}_{login_datetime[:4]}.xlsx"
@@ -505,7 +507,7 @@ class ReportCreator:
         qr_size = min(cell_w, cell_h) * 0.55
 
         def _draw_page_header():
-            pdf.set_font("Arial", "B", 14)
+            pdf.set_font("Helvetica", "B", 14)
             pdf.set_xy(0, 10)
             pdf.cell(0, 10, "Etichette QR apparati", align="C")
 
@@ -530,11 +532,11 @@ class ReportCreator:
             pdf.image(qr_img, x=qr_x, y=y, w=qr_size, h=qr_size)
 
             pdf.set_xy(x, y + qr_size + 2)
-            pdf.set_font("Arial", "B", 9)
+            pdf.set_font("Helvetica", "B", 9)
             pdf.cell(cell_w, 5, codice, align="C")
 
             pdf.set_xy(x, y + qr_size + 7)
-            pdf.set_font("Arial", "", 8)
+            pdf.set_font("Helvetica", "", 8)
             pdf.cell(cell_w, 5, textwrap.shorten(modello, width=26, placeholder="..."), align="C")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

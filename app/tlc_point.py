@@ -18,13 +18,15 @@ Struttura del file Excel (due fogli):
 
   Apparati  → anagrafica + stato corrente di ogni apparato
               Codice | Modello | Numero_seriale | Note |
-              Stato | Assegnato_a | Data_ultimo_movimento
+              Stato | Assegnato_a | Data_ultimo_movimento | Alias | ODV | Cellulare
 
   Movimenti → log storico di ogni carico/scarico
-              Data_ora | Codice | Modello | Operazione | Persona | Operatore
+              Data_ora | Codice | Modello | Operazione | Persona | Operatore |
+              Alias | ODV | Cellulare
 """
 
 import os
+import sys
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
@@ -33,13 +35,40 @@ from typing import Callable, Optional
 from openpyxl import Workbook, load_workbook
 
 from report_creator import ReportCreator
-from ui_utils import add_vscrollbar
+from ui_utils import Tooltip, add_vscrollbar, show_banner
 
 try:
     import qrcode
     _QRCODE_AVAILABLE = True
 except ImportError:
     _QRCODE_AVAILABLE = False
+
+if sys.platform == "win32":
+    try:
+        import winsound
+        _SOUND_AVAILABLE = True
+    except ImportError:
+        _SOUND_AVAILABLE = False
+else:
+    _SOUND_AVAILABLE = False
+
+
+def _beep(kind: str = "ok") -> None:
+    """
+    Conferma sonora per scan/carico/scarico: utile perché durante una
+    sessione di scansioni ripetute l'operatore spesso non guarda lo
+    schermo. Solo Windows (unico target di distribuzione dell'app);
+    fallisce silenziosamente altrove o se l'audio non è disponibile.
+    """
+    if not _SOUND_AVAILABLE:
+        return
+    try:
+        if kind == "ok":
+            winsound.Beep(1200, 90)
+        else:
+            winsound.Beep(400, 200)
+    except Exception:
+        pass
 
 
 # ── Normalizzazione codici ──────────────────────────────────────────────────
@@ -81,9 +110,10 @@ class EquipmentManager:
     SHEET_MOVIMENTI = "Movimenti"
 
     APPARATI_HEADERS = ["Codice", "Modello", "Numero_seriale", "Note",
-                        "Stato", "Assegnato_a", "Data_ultimo_movimento", "Alias"]
+                        "Stato", "Assegnato_a", "Data_ultimo_movimento", "Alias",
+                        "ODV", "Cellulare"]
     MOVIMENTI_HEADERS = ["Data_ora", "Codice", "Modello", "Operazione",
-                         "Persona", "Operatore", "Alias"]
+                         "Persona", "Operatore", "Alias", "ODV", "Cellulare"]
 
     STATO_DISPONIBILE = "Disponibile"
     STATO_IN_CARICO    = "In carico"
@@ -189,8 +219,9 @@ class EquipmentManager:
                   self.STATO_DISPONIBILE, "", "", ""])
         self._save()
 
-    def carico(self, codice: str, persona: str, operatore: str, alias: str = "") -> None:
-        """Assegna un apparato disponibile a una persona (carico), con alias opzionale usato durante la missione."""
+    def carico(self, codice: str, persona: str, operatore: str, alias: str = "",
+              odv: str = "", cellulare: str = "") -> None:
+        """Assegna un apparato disponibile a una persona (carico), con alias, ODV e cellulare opzionali."""
         if not persona:
             raise ValueError("Il nome della persona è obbligatorio.")
         row_idx = self._find_row_index(codice)
@@ -209,8 +240,10 @@ class EquipmentManager:
         ws.cell(row=row_idx, column=6, value=persona)
         ws.cell(row=row_idx, column=7, value=now)
         ws.cell(row=row_idx, column=8, value=alias or "")
+        ws.cell(row=row_idx, column=9, value=odv or "")
+        ws.cell(row=row_idx, column=10, value=cellulare or "")
 
-        self._append_movimento(now, codice, modello, "Carico", persona, operatore, alias)
+        self._append_movimento(now, codice, modello, "Carico", persona, operatore, alias, odv, cellulare)
         self._save()
 
     def scarico(self, codice: str, operatore: str) -> None:
@@ -224,16 +257,20 @@ class EquipmentManager:
         if stato != self.STATO_IN_CARICO:
             raise ValueError("Apparato già disponibile (non risulta in carico).")
 
-        now     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        modello = ws.cell(row=row_idx, column=2).value
-        persona = ws.cell(row=row_idx, column=6).value
-        alias   = ws.cell(row=row_idx, column=8).value
+        now       = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        modello   = ws.cell(row=row_idx, column=2).value
+        persona   = ws.cell(row=row_idx, column=6).value
+        alias     = ws.cell(row=row_idx, column=8).value
+        odv       = ws.cell(row=row_idx, column=9).value
+        cellulare = ws.cell(row=row_idx, column=10).value
         ws.cell(row=row_idx, column=5, value=self.STATO_DISPONIBILE)
         ws.cell(row=row_idx, column=6, value="")
         ws.cell(row=row_idx, column=7, value=now)
         ws.cell(row=row_idx, column=8, value="")
+        ws.cell(row=row_idx, column=9, value="")
+        ws.cell(row=row_idx, column=10, value="")
 
-        self._append_movimento(now, codice, modello, "Scarico", persona, operatore, alias)
+        self._append_movimento(now, codice, modello, "Scarico", persona, operatore, alias, odv, cellulare)
         self._save()
 
     # ------------------------------------------------------------------
@@ -252,9 +289,11 @@ class EquipmentManager:
                 return i
         return None
 
-    def _append_movimento(self, data_ora, codice, modello, operazione, persona, operatore, alias="") -> None:
+    def _append_movimento(self, data_ora, codice, modello, operazione, persona, operatore,
+                          alias="", odv="", cellulare="") -> None:
         ws = self._wb[self.SHEET_MOVIMENTI]
-        ws.append([data_ora, codice, modello, operazione, persona or "", operatore or "", alias or ""])
+        ws.append([data_ora, codice, modello, operazione, persona or "", operatore or "",
+                  alias or "", odv or "", cellulare or ""])
 
     def _ensure_sheets(self) -> None:
         if self.SHEET_APPARATI not in self._wb.sheetnames:
@@ -336,6 +375,8 @@ class TLCPointPanel(tk.Frame):
             "last_move_label" : "Ultimo movimento:",
             "person_label"    : "Persona:",
             "alias_label"     : "Alias (nominativo missione):",
+            "odv_label"       : "ODV:",
+            "cellulare_label" : "Cellulare:",
             "load_btn"        : "Carica (assegna)",
             "unload_btn"      : "Scarica (restituisci)",
             "status_available": "Disponibile",
@@ -346,6 +387,8 @@ class TLCPointPanel(tk.Frame):
             "col_status"      : "Stato",
             "col_assigned"    : "Assegnato a",
             "col_alias"       : "Alias",
+            "col_odv"         : "ODV",
+            "col_cellulare"   : "Cellulare",
             "list_header"     : "Elenco apparati",
             "use_selected"    : "Usa selezionato",
             "history_header"  : "Storico movimenti",
@@ -402,6 +445,8 @@ class TLCPointPanel(tk.Frame):
             "last_move_label" : "Last movement:",
             "person_label"    : "Person:",
             "alias_label"     : "Alias (mission callsign):",
+            "odv_label"       : "Volunteer org (ODV):",
+            "cellulare_label" : "Mobile phone:",
             "load_btn"        : "Check out (assign)",
             "unload_btn"      : "Check in (return)",
             "status_available": "Available",
@@ -412,6 +457,8 @@ class TLCPointPanel(tk.Frame):
             "col_status"      : "Status",
             "col_assigned"    : "Assigned to",
             "col_alias"       : "Alias",
+            "col_odv"         : "Volunteer org (ODV)",
+            "col_cellulare"   : "Mobile phone",
             "list_header"     : "Equipment list",
             "use_selected"    : "Use selected",
             "history_header"  : "Movement history",
@@ -456,7 +503,8 @@ class TLCPointPanel(tk.Frame):
     def __init__(self, parent: tk.Widget, db_path: str,
                 get_operator: Callable[[], str], lang: str = "it",
                 directory: str = ".", logo_path: str = "",
-                push_assignments: Optional[Callable[[list], None]] = None):
+                push_assignments: Optional[Callable[[list], None]] = None,
+                on_aliases_changed: Optional[Callable[[list], None]] = None):
         super().__init__(parent)
         self._db_path         = db_path
         self._get_operator    = get_operator
@@ -464,6 +512,7 @@ class TLCPointPanel(tk.Frame):
         self._directory       = directory
         self._logo_path       = logo_path
         self._push_assignments = push_assignments
+        self._on_aliases_changed = on_aliases_changed
         self._reporter         = ReportCreator()
         self._current_code: Optional[str] = None
         self._manager: Optional[EquipmentManager] = None
@@ -507,12 +556,16 @@ class TLCPointPanel(tk.Frame):
         self._tree_apparati.heading("stato", text=t["col_status"])
         self._tree_apparati.heading("assegnato", text=t["col_assigned"])
         self._tree_apparati.heading("alias", text=t["col_alias"])
+        self._tree_apparati.heading("odv", text=t["col_odv"])
+        self._tree_apparati.heading("cellulare", text=t["col_cellulare"])
         self._tree_movimenti.heading("data", text=t["col_datetime"])
         self._tree_movimenti.heading("codice", text=t["col_code"])
         self._tree_movimenti.heading("modello", text=t["col_model"])
         self._tree_movimenti.heading("operazione", text=t["col_operation"])
         self._tree_movimenti.heading("persona", text=t["col_person"])
         self._tree_movimenti.heading("alias", text=t["col_alias"])
+        self._tree_movimenti.heading("odv", text=t["col_odv"])
+        self._tree_movimenti.heading("cellulare", text=t["col_cellulare"])
         self._tree_movimenti.heading("operatore", text=t["col_operator"])
         self._clear_scheda()
 
@@ -530,8 +583,8 @@ class TLCPointPanel(tk.Frame):
         self._lbl_scan = tk.Label(scan_frame, text=t["scan_label"], font=("Helvetica", 11, "bold"))
         self._lbl_scan.pack(anchor="w")
 
-        self._entry_code = ttk.Entry(scan_frame, font=("Courier", 14))
-        self._entry_code.pack(side="left", fill="x", expand=True, pady=5, ipady=4)
+        self._entry_code = ttk.Entry(scan_frame, font=("Courier", 16, "bold"))
+        self._entry_code.pack(side="left", fill="x", expand=True, pady=5, ipady=6)
         self._entry_code.bind("<Return>", self._on_scan)
         self._entry_code.focus_set()
 
@@ -588,9 +641,15 @@ class TLCPointPanel(tk.Frame):
         tk.Label(self._frame_carico, text=t["alias_label"]).grid(row=1, column=0, padx=5, pady=5, sticky="e")
         self._entry_alias = ttk.Entry(self._frame_carico)
         self._entry_alias.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        tk.Label(self._frame_carico, text=t["odv_label"]).grid(row=2, column=0, padx=5, pady=5, sticky="e")
+        self._entry_odv = ttk.Entry(self._frame_carico)
+        self._entry_odv.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        tk.Label(self._frame_carico, text=t["cellulare_label"]).grid(row=3, column=0, padx=5, pady=5, sticky="e")
+        self._entry_cellulare = ttk.Entry(self._frame_carico)
+        self._entry_cellulare.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
         self._frame_carico.columnconfigure(1, weight=1)
         self._btn_carico = tk.Button(self._frame_carico, text=t["load_btn"], command=self._do_carico)
-        self._btn_carico.grid(row=2, column=0, columnspan=2, pady=(0, 10))
+        self._btn_carico.grid(row=4, column=0, columnspan=2, pady=(0, 10))
 
         # -- Sotto-frame per azione "Scarico" --
         self._frame_scarico = tk.Frame(frame)
@@ -629,19 +688,25 @@ class TLCPointPanel(tk.Frame):
         self._entry_search.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 5))
         self._entry_search.bind("<KeyRelease>", lambda e: self._refresh_apparati_list())
 
-        columns = ("codice", "modello", "stato", "assegnato", "alias")
+        columns = ("codice", "modello", "stato", "assegnato", "alias", "odv", "cellulare")
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=8)
-        for col, key in zip(columns, ("col_code", "col_model", "col_status", "col_assigned", "col_alias")):
+        for col, key in zip(columns, ("col_code", "col_model", "col_status", "col_assigned",
+                                      "col_alias", "col_odv", "col_cellulare")):
             tree.heading(col, text=t[key])
         tree.column("codice", width=100)
         tree.column("modello", width=120)
         tree.column("stato", width=90)
         tree.column("assegnato", width=100)
         tree.column("alias", width=90)
+        tree.column("odv", width=90)
+        tree.column("cellulare", width=100)
         tree.grid(row=2, column=0, sticky="nsew", padx=(8, 0), pady=(0, 5))
         tree.bind("<Double-1>", lambda e: self._use_selected())
         add_vscrollbar(frame, tree)
         self._tree_apparati = tree
+        self._notes_by_code: dict[str, str] = {}
+        self._codice_by_item: dict[str, str] = {}
+        Tooltip(tree, self._apparati_row_tooltip_text)
 
         btns_frame = tk.Frame(frame)
         btns_frame.grid(row=3, column=0, pady=(0, 8))
@@ -663,12 +728,13 @@ class TLCPointPanel(tk.Frame):
         self._btn_tlc_log_report = tk.Button(header_frame, text=t["tlc_log_report_btn"], command=self._generate_tlc_log_report)
         self._btn_tlc_log_report.pack(side="right")
 
-        columns = ("data", "codice", "modello", "operazione", "persona", "alias", "operatore")
+        columns = ("data", "codice", "modello", "operazione", "persona", "alias",
+                  "odv", "cellulare", "operatore")
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=6)
         headers_map = {
             "data": "col_datetime", "codice": "col_code", "modello": "col_model",
             "operazione": "col_operation", "persona": "col_person", "alias": "col_alias",
-            "operatore": "col_operator",
+            "odv": "col_odv", "cellulare": "col_cellulare", "operatore": "col_operator",
         }
         for col, key in headers_map.items():
             tree.heading(col, text=t[key])
@@ -678,6 +744,8 @@ class TLCPointPanel(tk.Frame):
         tree.column("operazione", width=80)
         tree.column("persona", width=100)
         tree.column("alias", width=90)
+        tree.column("odv", width=90)
+        tree.column("cellulare", width=100)
         tree.column("operatore", width=100)
 
         tree_wrap = tk.Frame(frame)
@@ -699,12 +767,19 @@ class TLCPointPanel(tk.Frame):
         if not codice:
             return
         self._show_apparato(codice)
+        # Conferma sonora dello scan: chi usa il lettore USB spesso non
+        # guarda lo schermo, il suono dice subito se il codice è censito.
+        _beep("ok" if self._manager.find(codice) else "error")
 
     def _use_selected(self) -> None:
         sel = self._tree_apparati.selection()
         if not sel:
             return
-        codice = self._tree_apparati.item(sel[0])["values"][0]
+        # Non si usa tree.item(sel[0])["values"][0]: Tk/Tcl converte in intero
+        # i valori che "sembrano" numeri, perdendo gli zeri iniziali (es. "053"
+        # diventerebbe 53). Si usa invece la mappa item->codice popolata in
+        # fase di inserimento, che conserva il codice come stringa esatta.
+        codice = self._codice_by_item.get(sel[0], self._tree_apparati.item(sel[0])["values"][0])
         self._entry_code.delete(0, tk.END)
         self._entry_code.insert(0, codice)
         self._show_apparato(str(codice))
@@ -731,6 +806,8 @@ class TLCPointPanel(tk.Frame):
         stato     = row.get("Stato") or self._manager.STATO_DISPONIBILE
         assegnato = row.get("Assegnato_a") or "—"
         alias     = row.get("Alias") or ""
+        odv       = row.get("ODV") or ""
+        cellulare = row.get("Cellulare") or ""
         ultimo    = row.get("Data_ultimo_movimento") or "—"
 
         assegnato_riga = f"{assegnato} ({alias})" if (assegnato != "—" and alias) else assegnato
@@ -743,6 +820,8 @@ class TLCPointPanel(tk.Frame):
             f"{t['assigned_label']} {assegnato_riga}\n"
             f"{t['last_move_label']} {ultimo}"
         )
+        if stato == self._manager.STATO_IN_CARICO and (odv or cellulare):
+            info += f"\n{t['odv_label']} {odv or '—'}\n{t['cellulare_label']} {cellulare or '—'}"
         self._scheda_info.config(text=info)
 
         if stato == self._manager.STATO_IN_CARICO:
@@ -750,6 +829,8 @@ class TLCPointPanel(tk.Frame):
         else:
             self._entry_persona.delete(0, tk.END)
             self._entry_alias.delete(0, tk.END)
+            self._entry_odv.delete(0, tk.END)
+            self._entry_cellulare.delete(0, tk.END)
             self._frame_carico.pack(fill="x")
 
     def _clear_scheda(self) -> None:
@@ -764,25 +845,32 @@ class TLCPointPanel(tk.Frame):
 
     def _do_carico(self) -> None:
         t = self._t()
-        persona = self._entry_persona.get().strip()
-        alias   = self._entry_alias.get().strip()
+        persona   = self._entry_persona.get().strip()
+        alias     = self._entry_alias.get().strip()
+        odv       = self._entry_odv.get().strip()
+        cellulare = self._entry_cellulare.get().strip()
         if not persona:
             messagebox.showerror(t["error_title"], t["person_required"])
             return
         try:
-            self._manager.carico(self._current_code, persona, self._get_operator() or "Operatore", alias)
-            messagebox.showinfo(t["success_title"], t["load_success"].format(self._current_code, persona))
+            self._manager.carico(self._current_code, persona, self._get_operator() or "Operatore",
+                                 alias, odv, cellulare)
+            _beep("ok")
+            show_banner(self.winfo_toplevel(), t["load_success"].format(self._current_code, persona))
             self._after_action()
         except ValueError as e:
+            _beep("error")
             messagebox.showerror(t["error_title"], str(e))
 
     def _do_scarico(self) -> None:
         t = self._t()
         try:
             self._manager.scarico(self._current_code, self._get_operator() or "Operatore")
-            messagebox.showinfo(t["success_title"], t["unload_success"].format(self._current_code))
+            _beep("ok")
+            show_banner(self.winfo_toplevel(), t["unload_success"].format(self._current_code))
             self._after_action()
         except ValueError as e:
+            _beep("error")
             messagebox.showerror(t["error_title"], str(e))
 
     def _do_register(self) -> None:
@@ -795,10 +883,12 @@ class TLCPointPanel(tk.Frame):
         note    = self._entry_new_note.get().strip()
         try:
             self._manager.register_new(self._current_code, modello, seriale, note)
-            messagebox.showinfo(t["success_title"], t["register_success"].format(self._current_code))
+            _beep("ok")
+            show_banner(self.winfo_toplevel(), t["register_success"].format(self._current_code))
             self._refresh_all()
             self._show_apparato(self._current_code)
         except ValueError as e:
+            _beep("error")
             messagebox.showerror(t["error_title"], str(e))
 
     def _after_action(self) -> None:
@@ -908,6 +998,8 @@ class TLCPointPanel(tk.Frame):
                 row.get("Numero_seriale") or "",
                 row.get("Assegnato_a") or "",
                 row.get("Alias") or "",
+                row.get("ODV") or "",
+                row.get("Cellulare") or "",
                 row.get("Data_ultimo_movimento") or "",
             )
             for row in self._manager.all_apparati()
@@ -947,6 +1039,8 @@ class TLCPointPanel(tk.Frame):
                 m.get("Operazione", ""),
                 m.get("Persona") or "",
                 m.get("Alias") or "",
+                m.get("ODV") or "",
+                m.get("Cellulare") or "",
                 m.get("Operatore") or "",
             )
             for m in self._manager.all_movements()
@@ -979,6 +1073,31 @@ class TLCPointPanel(tk.Frame):
         self._refresh_apparati_list()
         self._refresh_movimenti()
         self._notify_assignments()
+        self._notify_aliases()
+
+    def get_known_aliases(self) -> list[str]:
+        """
+        Restituisce gli alias (nominativi missione) attualmente in uso, cioè
+        quelli di apparati al momento in carico — usati per suggerirli nel
+        registro comunicazioni.
+
+        Volutamente NON include lo storico movimenti: un alias resta
+        suggerito solo finché l'apparato a cui è associato è in carico. Non
+        appena viene scaricato, il nominativo va "dimenticato" dai
+        suggerimenti (scarico() svuota già il campo Alias in anagrafica).
+        """
+        if not self._manager:
+            return []
+        aliases = {
+            str(row["Alias"])
+            for row in self._manager.all_apparati()
+            if row.get("Alias")
+        }
+        return sorted(aliases)
+
+    def _notify_aliases(self) -> None:
+        if self._on_aliases_changed:
+            self._on_aliases_changed(self.get_known_aliases())
 
     def _notify_assignments(self) -> None:
         """Invia il riepilogo assegnazioni correnti alla dashboard web (se collegata)."""
@@ -986,11 +1105,13 @@ class TLCPointPanel(tk.Frame):
             return
         items = [
             {
-                "codice" : row.get("Codice", ""),
-                "modello": row.get("Modello") or "",
-                "persona": row.get("Assegnato_a") or "",
-                "alias"  : row.get("Alias") or "",
-                "dal"    : row.get("Data_ultimo_movimento") or "",
+                "codice"   : row.get("Codice", ""),
+                "modello"  : row.get("Modello") or "",
+                "persona"  : row.get("Assegnato_a") or "",
+                "alias"    : row.get("Alias") or "",
+                "odv"      : row.get("ODV") or "",
+                "cellulare": row.get("Cellulare") or "",
+                "dal"      : row.get("Data_ultimo_movimento") or "",
             }
             for row in self._manager.all_apparati()
             if (row.get("Stato") or self._manager.STATO_DISPONIBILE) == self._manager.STATO_IN_CARICO
@@ -1004,7 +1125,8 @@ class TLCPointPanel(tk.Frame):
         query = self._entry_search.get().strip().lower() if hasattr(self, "_entry_search") else ""
         result = []
         for row in self._manager.all_apparati():
-            haystack = " ".join(str(row.get(k) or "") for k in ("Codice", "Modello", "Assegnato_a")).lower()
+            haystack = " ".join(str(row.get(k) or "") for k in
+                               ("Codice", "Modello", "Assegnato_a", "ODV", "Cellulare")).lower()
             if query and query not in haystack:
                 continue
             result.append(row)
@@ -1014,13 +1136,32 @@ class TLCPointPanel(tk.Frame):
         if not self._manager:
             return
         self._tree_apparati.delete(*self._tree_apparati.get_children())
+        self._notes_by_code = {}
+        self._codice_by_item = {}
         for row in self._filtered_apparati():
-            self._tree_apparati.insert("", tk.END, values=(
-                row.get("Codice", ""), row.get("Modello", ""),
+            codice = str(row.get("Codice", ""))
+            item_id = self._tree_apparati.insert("", tk.END, values=(
+                codice, row.get("Modello", ""),
                 row.get("Stato") or self._manager.STATO_DISPONIBILE,
                 row.get("Assegnato_a") or "—",
                 row.get("Alias") or "—",
+                row.get("ODV") or "—",
+                row.get("Cellulare") or "—",
             ))
+            self._codice_by_item[item_id] = codice
+            if row.get("Note"):
+                self._notes_by_code[codice] = str(row["Note"])
+
+    def _apparati_row_tooltip_text(self, event) -> str:
+        """Testo del tooltip per la riga sotto il cursore: le Note complete
+        dell'apparato (non mostrate in nessuna colonna dell'elenco)."""
+        row_id = self._tree_apparati.identify_row(event.y)
+        if not row_id:
+            return ""
+        codice = self._codice_by_item.get(row_id)
+        if codice is None:
+            return ""
+        return self._notes_by_code.get(codice, "")
 
     def _refresh_movimenti(self) -> None:
         if not self._manager:
@@ -1030,7 +1171,8 @@ class TLCPointPanel(tk.Frame):
             self._tree_movimenti.insert("", tk.END, values=(
                 m.get("Data_ora", ""), m.get("Codice", ""), m.get("Modello", ""),
                 m.get("Operazione", ""), m.get("Persona", ""),
-                m.get("Alias") or "—", m.get("Operatore", ""),
+                m.get("Alias") or "—", m.get("ODV") or "—", m.get("Cellulare") or "—",
+                m.get("Operatore", ""),
             ))
 
     # ------------------------------------------------------------------

@@ -4,6 +4,7 @@ directory_selector.py
 Finestra Tkinter per la selezione della cartella di salvataggio.
 """
 
+import json
 import os
 import socket
 import tkinter as tk
@@ -11,7 +12,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from ui_utils import adaptive_geometry
+from ui_utils import (
+    COLOR_ERROR, COLOR_SUCCESS, adaptive_geometry, apply_theme, maximize_if_small_screen,
+)
 
 
 class ConnectionChecker:
@@ -53,6 +56,10 @@ class DirectorySelector:
             "connected"     : "Connesso a Internet",
             "disconnected"  : "Non connesso a Internet",
             "waiting"       : "Attendo...",
+            "options_header": "Cartella di salvataggio",
+            "path_valid"    : "✓ Cartella valida",
+            "path_missing"  : "La cartella non esiste ancora: verrà creata",
+            "path_empty"    : "",
         },
         "en": {
             "window_title"  : "Select Save Directory",
@@ -69,17 +76,45 @@ class DirectorySelector:
             "connected"     : "Connected to Internet",
             "disconnected"  : "Not connected to Internet",
             "waiting"       : "Waiting...",
+            "options_header": "Save location",
+            "path_valid"    : "✓ Valid folder",
+            "path_missing"  : "Folder does not exist yet: it will be created",
+            "path_empty"    : "",
         },
     }
 
     LED_REFRESH_MS = 2000
 
-    def __init__(self, logo_path: str, flag_list: list[str], drive_path: str):
+    def __init__(self, logo_path: str, flag_list: list[str], drive_path: str,
+                state_path: str | None = None):
         self._logo_path  = logo_path
         self._flag_list  = flag_list   # [it_flag_path, en_flag_path]
         self._drive_path = drive_path
+        self._state_path = state_path   # dove ricordare l'ultima scelta tra un riavvio e l'altro
         self._lang       = "it"
         self._result: str | None = None
+
+    # ------------------------------------------------------------------
+    # Ultima scelta ricordata tra un riavvio e l'altro
+    # ------------------------------------------------------------------
+
+    def _load_last_choice(self) -> dict:
+        if not self._state_path or not os.path.exists(self._state_path):
+            return {}
+        try:
+            with open(self._state_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_last_choice(self, option: str, external_path: str) -> None:
+        if not self._state_path:
+            return
+        try:
+            with open(self._state_path, "w", encoding="utf-8") as f:
+                json.dump({"option": option, "external_path": external_path}, f)
+        except Exception:
+            pass  # non critico: al peggio la prossima volta non viene ricordata
 
     # ------------------------------------------------------------------
     # Public
@@ -99,8 +134,13 @@ class DirectorySelector:
         t = self._t()
         root = tk.Tk()
         root.title(t["window_title"])
+        apply_theme(root)
         adaptive_geometry(root, 1200, 800, min_w=650, min_h=550)
         root.resizable(True, True)
+        # Su schermi piccoli (netbook, laptop a bassa risoluzione) massimizza
+        # subito: evita che i pulsanti in fondo (Avanti, bandiere) restino
+        # fuori dall'area visibile sotto la taskbar.
+        maximize_if_small_screen(root)
         self._root = root
 
         # Icona
@@ -118,38 +158,52 @@ class DirectorySelector:
         # LED connessione
         self._build_led(root)
 
-        # Opzioni di salvataggio
-        self._var_option = tk.StringVar(value="drive")
+        last_choice = self._load_last_choice()
+
+        # Opzioni di salvataggio, raggruppate in un riquadro con titolo
+        self._options_frame = ttk.LabelFrame(root, text=t["options_header"])
+        self._options_frame.pack(fill="x", padx=20, pady=10)
+
+        self._var_option = tk.StringVar(value=last_choice.get("option", "drive"))
 
         self._rb_drive = ttk.Radiobutton(
-            root, text=t["rb_drive"], variable=self._var_option,
+            self._options_frame, text=t["rb_drive"], variable=self._var_option,
             value="drive", command=self._toggle_entry
         )
-        self._rb_drive.pack(anchor="w", padx=20, pady=5)
+        self._rb_drive.pack(anchor="w", padx=15, pady=5)
 
         self._rb_local = ttk.Radiobutton(
-            root, text=t["rb_local"], variable=self._var_option,
+            self._options_frame, text=t["rb_local"], variable=self._var_option,
             value="local", command=self._toggle_entry
         )
-        self._rb_local.pack(anchor="w", padx=20, pady=5)
+        self._rb_local.pack(anchor="w", padx=15, pady=5)
 
         self._rb_external = ttk.Radiobutton(
-            root, text=t["rb_external"], variable=self._var_option,
+            self._options_frame, text=t["rb_external"], variable=self._var_option,
             value="external", command=self._toggle_entry
         )
-        self._rb_external.pack(anchor="w", padx=20, pady=5)
+        self._rb_external.pack(anchor="w", padx=15, pady=5)
 
-        # Frame cartella esterna
-        ext_frame = tk.Frame(root)
-        ext_frame.pack(anchor="w", padx=40, pady=5)
+        # Frame cartella esterna (con validazione inline del percorso)
+        ext_frame = tk.Frame(self._options_frame)
+        ext_frame.pack(anchor="w", padx=35, pady=(0, 10))
         self._entry_ext = ttk.Entry(ext_frame, width=40, state="disabled")
         self._entry_ext.pack(side="left", padx=5)
+        self._entry_ext.bind("<KeyRelease>", lambda e: self._update_path_validation())
+        if last_choice.get("option") == "external" and last_choice.get("external_path"):
+            self._entry_ext.config(state="normal")
+            self._entry_ext.insert(0, last_choice["external_path"])
         self._btn_browse = ttk.Button(ext_frame, text=t["browse"],
                                       command=self._browse, state="disabled")
         self._btn_browse.pack(side="left")
 
+        self._lbl_path_status = tk.Label(self._options_frame, text="", font=("Helvetica", 8))
+        self._lbl_path_status.pack(anchor="w", padx=35, pady=(0, 5))
+
+        self._toggle_entry()  # applica lo stato corretto dei campi in base alla scelta ricordata
+
         # Pulsante Avanti
-        self._btn_proceed = ttk.Button(root, text=t["proceed"], command=self._proceed)
+        self._btn_proceed = ttk.Button(root, text=t["proceed"], style="Accent.TButton", command=self._proceed)
         self._btn_proceed.pack(pady=20)
 
         # Bandiere
@@ -209,6 +263,7 @@ class DirectorySelector:
                 except Exception as e:
                     messagebox.showerror("Errore", t["err_mkdir"].format(e))
                     return
+        self._save_last_choice(opt, self._entry_ext.get() if opt == "external" else "")
         self._result = directory
         self._root.destroy()
 
@@ -218,6 +273,7 @@ class DirectorySelector:
             self._entry_ext.config(state="normal")
             self._entry_ext.delete(0, tk.END)
             self._entry_ext.insert(0, path)
+            self._update_path_validation()
 
     def _toggle_entry(self) -> None:
         opt = self._var_option.get()
@@ -228,6 +284,25 @@ class DirectorySelector:
             self._entry_ext.config(state="disabled")
             self._entry_ext.delete(0, tk.END)
             self._btn_browse.config(state="disabled")
+        self._update_path_validation()
+
+    def _update_path_validation(self) -> None:
+        """
+        Aggiorna in tempo reale l'indicazione ✓/testo sotto il campo
+        cartella esterna, così l'errore si vede subito mentre si digita
+        invece di scoprirlo solo al click su "Avanti".
+        """
+        t = self._t()
+        if self._var_option.get() != "external":
+            self._lbl_path_status.config(text="")
+            return
+        path = self._entry_ext.get().strip()
+        if not path:
+            self._lbl_path_status.config(text="")
+        elif os.path.isdir(path):
+            self._lbl_path_status.config(text=t["path_valid"], fg=COLOR_SUCCESS)
+        else:
+            self._lbl_path_status.config(text=t["path_missing"], fg=COLOR_ERROR)
 
     def _change_language(self, lang: str) -> None:
         self._lang = lang
@@ -239,6 +314,8 @@ class DirectorySelector:
         self._rb_external.config(text=t["rb_external"])
         self._btn_browse.config(text=t["browse"])
         self._btn_proceed.config(text=t["proceed"])
+        self._options_frame.config(text=t["options_header"])
+        self._update_path_validation()
 
     def _refresh_led(self) -> None:
         t = self._t()

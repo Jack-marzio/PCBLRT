@@ -11,6 +11,15 @@ import shutil
 import argparse
 from pathlib import Path
 
+# Console Windows con codifica legacy (cp1252) manda in crash i print() con
+# caratteri come "✔" o "❌". Forza UTF-8 sullo stream prima di qualunque output.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # ──────────────────────────────────────────────
 # CONFIGURAZIONE
 # ──────────────────────────────────────────────
@@ -28,16 +37,13 @@ ADDED_DATA = [
 
 # Moduli nascosti che PyInstaller non rileva automaticamente
 HIDDEN_IMPORTS = [
-    "firebase_admin",
-    "firebase_admin.db",
-    "gevent",
     "flask",
-    "flask_socketio",
-    "engineio",
-    "socketio",
-    "requests",
     "PIL",
     "PIL.Image",
+    "openpyxl",
+    "fpdf",
+    "qrcode",
+    "tkintermapview",
 ]
 
 # ──────────────────────────────────────────────

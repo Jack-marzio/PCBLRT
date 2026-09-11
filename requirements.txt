@@ -1,0 +1,8 @@
+Pillow
+openpyxl
+pandas
+flask
+fpdf2
+qrcode[pil]
+tkintermapview
+geopy

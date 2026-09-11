@@ -12,11 +12,22 @@ from tkinter import messagebox, ttk
 
 from PIL import Image, ImageTk
 
+try:
+    import qrcode
+    _QRCODE_AVAILABLE = True
+except ImportError:
+    _QRCODE_AVAILABLE = False
+
+from admin_panel import open_admin_panel
 from directory_selector import ConnectionChecker
+from map_panel import GisMapPanel
 from recovery_manager import RecoveryManager
 from report_creator import ReportCreator
 from tlc_point import TLCPointPanel
-from ui_utils import adaptive_geometry, add_vscrollbar, maximize_if_small_screen
+from ui_utils import (
+    AutocompleteCombobox, adaptive_geometry, add_vscrollbar, apply_theme,
+    maximize_if_small_screen,
+)
 from web_dashboard import WebDashboard
 
 
@@ -26,11 +37,13 @@ from web_dashboard import WebDashboard
 
 class SplashScreen:
     """
-    Mostra una finestra di benvenuto con logo, titolo e crediti,
-    che si chiude automaticamente dopo un intervallo configurabile.
+    Mostra una finestra di benvenuto con logo, titolo, crediti e una barra
+    di caricamento, che si chiude automaticamente dopo un intervallo
+    configurabile.
     """
 
     DISPLAY_MS = 3000
+    PROGRESS_STEP_MS = 30
 
     def __init__(self, firmware: str, logo_path: str, proprieties: str):
         self._firmware    = firmware
@@ -41,6 +54,7 @@ class SplashScreen:
         """Apre la splash screen e attende che si chiuda."""
         root = tk.Tk()
         root.title("ProcivBesRadioTeamTool")
+        apply_theme(root)
         adaptive_geometry(root, 1200, 800, min_w=500, min_h=400)
         root.resizable(True, True)
 
@@ -71,8 +85,30 @@ class SplashScreen:
             font=("Helvetica", 8)
         ).pack(side="bottom", pady=10)
 
+        progress = ttk.Progressbar(root, mode="determinate", maximum=100, length=280)
+        progress.pack(pady=(5, 5))
+        lbl_loading = tk.Label(root, text="Avvio in corso...", font=("Helvetica", 9), fg="#666666")
+        lbl_loading.pack(pady=(0, 15))
+
+        self._animate_progress(root, progress, elapsed=0)
         root.after(self.DISPLAY_MS, root.destroy)
         root.mainloop()
+
+    def _animate_progress(self, root: tk.Tk, progress: ttk.Progressbar, elapsed: int) -> None:
+        """Avanza la barra di caricamento in modo che raggiunga il 100%
+        esattamente quando la splash screen si chiude."""
+        # L'ultimo aggiornamento programmato può arrivare più o meno insieme
+        # a root.destroy() (schedulato allo stesso istante DISPLAY_MS): se la
+        # finestra è già stata distrutta non tocca né il widget né root.after,
+        # altrimenti Tk solleverebbe un TclError "invalid command name".
+        if not root.winfo_exists():
+            return
+        progress["value"] = min(100, elapsed / self.DISPLAY_MS * 100)
+        if elapsed < self.DISPLAY_MS:
+            root.after(
+                self.PROGRESS_STEP_MS,
+                lambda: self._animate_progress(root, progress, elapsed + self.PROGRESS_STEP_MS)
+            )
 
 
 
@@ -125,8 +161,20 @@ class RadioLogInterface:
             "dashboard_link"  : "Link dashboard:",
             "copy_link"       : "Copia link",
             "link_copied"     : "Link copiato!",
+            "show_qr"         : "Mostra QR",
+            "qr_window_title" : "QR dashboard",
+            "qr_hint"         : "Inquadra con la fotocamera del telefono per aprire la dashboard.",
+            "qr_unavailable"  : "Generazione QR non disponibile: libreria 'qrcode' non installata.",
             "tab_log"         : "Log Comunicazioni",
             "tab_tlc"         : "TLC Point",
+            "tab_map"         : "Mappa",
+            "menu_settings"   : "Impostazioni",
+            "menu_admin"      : "Pannello amministratore...",
+            "menu_language"   : "Lingua",
+            "form_header"     : "Dati comunicazione",
+            "empty_log"       : "Nessun log ancora. Compila il modulo sopra e premi \"Aggiungi Log\".",
+            "empty_chat"      : "Nessun messaggio in chat.",
+            "generating"      : "Generazione in corso...",
         },
         "en": {
             "operator"        : "Operator:",
@@ -162,12 +210,25 @@ class RadioLogInterface:
             "dashboard_link"  : "Dashboard link:",
             "copy_link"       : "Copy link",
             "link_copied"     : "Link copied!",
+            "show_qr"         : "Show QR",
+            "qr_window_title" : "Dashboard QR",
+            "qr_hint"         : "Scan with your phone's camera to open the dashboard.",
+            "qr_unavailable"  : "QR generation unavailable: 'qrcode' library not installed.",
             "tab_log"         : "Communication Log",
             "tab_tlc"         : "TLC Point",
+            "tab_map"         : "Map",
+            "menu_settings"   : "Settings",
+            "menu_admin"      : "Administrator panel...",
+            "menu_language"   : "Language",
+            "form_header"     : "Communication data",
+            "empty_log"       : "No log entries yet. Fill out the form above and press \"Add Log\".",
+            "empty_chat"      : "No chat messages.",
+            "generating"      : "Generating...",
         },
     }
 
     LED_REFRESH_MS = 2000
+    DASHBOARD_LINK_REFRESH_MS = 5000
 
     def __init__(
         self,
@@ -175,19 +236,24 @@ class RadioLogInterface:
         directory: str,
         n_files: int,
         logo_path: str,
-        flag_list: list[str],
         program_title: str = "Radio Communication Log",
         dashboard: WebDashboard | None = None,
         apparati_db_path: str = "apparati.xlsx",
+        map_data_path: str = "mappa_gis.json",
+        config_path: str = "configurator.txt",
     ):
         self._login_datetime   = login_datetime
         self._directory        = directory
         self._n_files          = n_files
         self._logo_path        = logo_path
-        self._flag_list        = flag_list
         self._program_title    = program_title
         self._apparati_db_path = apparati_db_path
+        self._map_data_path    = map_data_path
+        self._config_path      = config_path
         self._lang             = "it"
+        # Alias TLC Point noti, suggeriti in mittente/destinatario del log:
+        # popolata/aggiornata da TLCPointPanel tramite on_aliases_changed.
+        self._alias_suggestions: list[str] = []
         self._communication_log: list[tuple] = []
         self._chat_log: list[tuple] = []  # (date_time, sender, origin, text)
         self._recovery         = RecoveryManager()
@@ -227,6 +293,16 @@ class RadioLogInterface:
         if self._dashboard:
             self._dashboard.push_assignments(assignments)
 
+    def _update_alias_suggestions(self, aliases: list) -> None:
+        """
+        Aggiorna l'elenco di alias suggeriti in mittente/destinatario,
+        chiamato da TLCPointPanel ogni volta che un alias viene assegnato,
+        restituito o registrato (carico/scarico/nuovo apparato).
+        """
+        self._alias_suggestions = aliases
+        self._entry_sender.set_completion_list(aliases)
+        self._entry_receiver.set_completion_list(aliases)
+
     # ------------------------------------------------------------------
     # Window construction
     # ------------------------------------------------------------------
@@ -234,6 +310,7 @@ class RadioLogInterface:
     def _build_window(self) -> None:
         root = tk.Tk()
         root.title(self._program_title)
+        apply_theme(root)
         adaptive_geometry(root, 1300, 950, min_w=900, min_h=650)
         root.resizable(True, True)
         # Su schermi piccoli (netbook, monitor secondari) massimizza subito:
@@ -241,6 +318,7 @@ class RadioLogInterface:
         maximize_if_small_screen(root)
         self._root = root
 
+        self._build_menu_bar(root)
         self._build_top_bar(root)
         self._build_led(root)
 
@@ -250,8 +328,10 @@ class RadioLogInterface:
 
         tab_log = tk.Frame(notebook)
         tab_tlc = tk.Frame(notebook)
+        tab_map = tk.Frame(notebook)
         notebook.add(tab_log, text=self._t()["tab_log"])
         notebook.add(tab_tlc, text=self._t()["tab_tlc"])
+        notebook.add(tab_map, text=self._t()["tab_map"])
 
         # ── Scheda "Log Comunicazioni" (contenuto storico dell'app) ──
         self._build_input_frame(tab_log)
@@ -266,7 +346,7 @@ class RadioLogInterface:
 
         self._build_dashboard_bar(tab_log)
         self._build_buttons(tab_log)
-        self._build_flags(tab_log)
+        self._update_empty_placeholders()
 
         # ── Scheda "TLC Point" (carico/scarico apparati) ─────────────
         self._tlc_panel = TLCPointPanel(
@@ -277,8 +357,13 @@ class RadioLogInterface:
             directory=self._directory,
             logo_path=self._logo_path,
             push_assignments=self._push_assignments_to_dashboard,
+            on_aliases_changed=self._update_alias_suggestions,
         )
         self._tlc_panel.pack(fill="both", expand=True)
+
+        # ── Scheda "Mappa" (GIS: operatori/ostacoli su OpenStreetMap) ──
+        self._map_panel = GisMapPanel(tab_map, data_path=self._map_data_path, lang=self._lang)
+        self._map_panel.pack(fill="both", expand=True)
 
         # Avvia il polling periodico della coda risposte remote.
         # Va schedulato qui (thread principale) e non richiamato dal thread
@@ -307,6 +392,36 @@ class RadioLogInterface:
         )
         self._title_label.pack(side="left", padx=10)
 
+    def _build_menu_bar(self, root: tk.Tk) -> None:
+        """
+        Barra menu con le azioni poco frequenti (pannello amministratore,
+        cambio lingua): le toglie di mezzo dal corpo della finestra
+        (prima erano un pulsante + due bandiere sempre visibili), liberando
+        spazio verticale utile su schermi piccoli.
+        """
+        t = self._t()
+        if getattr(self, "_menubar", None) is not None:
+            self._menubar.destroy()
+
+        menubar = tk.Menu(root)
+
+        settings_menu = tk.Menu(menubar, tearoff=False)
+        settings_menu.add_command(label=t["menu_admin"], command=self._open_admin_panel)
+
+        lang_menu = tk.Menu(settings_menu, tearoff=False)
+        lang_menu.add_command(label="Italiano", command=lambda: self._change_language("it"))
+        lang_menu.add_command(label="English", command=lambda: self._change_language("en"))
+        settings_menu.add_cascade(label=t["menu_language"], menu=lang_menu)
+
+        menubar.add_cascade(label=t["menu_settings"], menu=settings_menu)
+        root.config(menu=menubar)
+        self._menubar       = menubar
+        self._settings_menu = settings_menu
+        self._lang_menu     = lang_menu
+
+    def _open_admin_panel(self) -> None:
+        open_admin_panel(self._root, self._config_path)
+
     def _build_led(self, parent: tk.Widget) -> None:
         frame = tk.Frame(parent)
         frame.pack(fill="x", pady=5)
@@ -323,7 +438,8 @@ class RadioLogInterface:
 
     def _build_input_frame(self, parent: tk.Widget) -> None:
         t = self._t()
-        frame = tk.Frame(parent)
+        self._form_labelframe = ttk.LabelFrame(parent, text=t["form_header"])
+        frame = self._form_labelframe
         frame.pack(pady=10, padx=20, fill="x")
         frame.grid_columnconfigure(1, weight=1)
         self._input_frame = frame
@@ -335,7 +451,25 @@ class RadioLogInterface:
             self._labels[key] = lbl
             entry = ttk.Entry(frame)
             entry.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
+            # Invio in un campo del form conferma il log, come premere
+            # "Aggiungi Log": evita di dover sempre afferrare il mouse.
+            entry.bind("<Return>", lambda e: self._add_log())
             return entry
+
+        def _row_alias_combo(key: str, row: int) -> AutocompleteCombobox:
+            """
+            Come _row(), ma con suggerimenti mentre si digita: mittente e
+            destinatario vengono spesso indicati con l'alias/nominativo
+            missione assegnato in TLC Point, che qui viene proposto per
+            evitare di doverlo ricordare/ridigitare a mano.
+            """
+            lbl = tk.Label(frame, text=t[key])
+            lbl.grid(row=row, column=0, sticky="e", pady=5, padx=5)
+            self._labels[key] = lbl
+            combo = AutocompleteCombobox(frame, completion_list=self._alias_suggestions)
+            combo.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
+            combo.bind("<Return>", lambda e: self._add_log())
+            return combo
 
         self._entry_operator     = _row("operator", 0)
         self._entry_event        = _row("event", 1)
@@ -350,8 +484,8 @@ class RadioLogInterface:
 
         self._entry_manual_dt    = _row("manual_datetime", 3)
         self._entry_manual_dt.config(state="disabled")
-        self._entry_sender       = _row("sender", 4)
-        self._entry_receiver     = _row("receiver", 5)
+        self._entry_sender       = _row_alias_combo("sender", 4)
+        self._entry_receiver     = _row_alias_combo("receiver", 5)
         self._entry_msg_received = _row("msg_received", 6)
         self._entry_msg_sent     = _row("msg_sent", 7)
 
@@ -375,6 +509,14 @@ class RadioLogInterface:
         self._listbox.grid(row=1, column=0, sticky="nsew", pady=5)
         add_vscrollbar(frame, self._listbox)
 
+        # Messaggio guida mostrato sopra la lista finché è vuota (stato
+        # iniziale prima del primo log), nascosto non appena c'è una voce.
+        self._lbl_log_empty = tk.Label(
+            self._listbox, text=self._t()["empty_log"], fg="#888888",
+            bg=self._listbox.cget("bg"), wraplength=420, justify="center",
+        )
+        self._lbl_log_empty.place(relx=0.5, rely=0.5, anchor="center")
+
         # Binding globale sulla finestra: frecce spostano il cursore nel listbox
         # indipendentemente da dove sia il focus in quel momento.
         self._root.bind("<Up>",   self._listbox_move_up)
@@ -397,20 +539,32 @@ class RadioLogInterface:
         )
         self._response_label.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(5, 0))
 
-        self._chat_listbox = tk.Listbox(
-            frame, width=35, height=10,
+        # Text invece di Listbox: una voce di chat lunga va così a capo su
+        # più righe invece di restare troncata su una singola riga senza
+        # scorrimento orizzontale (limite del Listbox, che non fa wrap).
+        self._chat_listbox = tk.Text(
+            frame, width=35, height=10, wrap="word",
             bg="#1a1a2e", fg="#00e5ff",
             selectbackground="#0d3b66",
-            font=("Courier", 9)
+            font=("Courier", 9), state="disabled",
+            relief="flat", padx=4, pady=2,
         )
+        self._chat_listbox.tag_config("locale", foreground="#00e5ff")
+        self._chat_listbox.tag_config("remoto", foreground="#ff6b35")
         self._chat_listbox.grid(row=1, column=0, sticky="nsew", padx=(5, 0), pady=5)
         add_vscrollbar(frame, self._chat_listbox)
+
+        self._lbl_chat_empty = tk.Label(
+            self._chat_listbox, text=self._t()["empty_chat"], fg="#5a7a80",
+            bg=self._chat_listbox.cget("bg"), wraplength=180, justify="center",
+        )
+        self._lbl_chat_empty.place(relx=0.5, rely=0.5, anchor="center")
 
         self._entry_chat = ttk.Entry(frame)
         self._entry_chat.grid(row=2, column=0, sticky="ew", padx=(5, 0), pady=(0, 5))
         self._entry_chat.bind("<Return>", lambda e: self._send_chat_message())
 
-        self._btn_chat_send = tk.Button(
+        self._btn_chat_send = ttk.Button(
             frame, text=self._t()["chat_send"], command=self._send_chat_message
         )
         self._btn_chat_send.grid(row=2, column=1, padx=(5, 5), pady=(0, 5))
@@ -437,6 +591,7 @@ class RadioLogInterface:
             cursor="hand2"
         )
         self._lbl_link.pack(side="left", padx=4)
+        self._refresh_dashboard_link()
 
         self._lbl_copied = tk.Label(frame, text="", font=("Helvetica", 8), fg="green")
         self._lbl_copied.pack(side="right", padx=8)
@@ -446,31 +601,55 @@ class RadioLogInterface:
             command=self._copy_dashboard_link, font=("Helvetica", 8)
         ).pack(side="right", padx=4, pady=3)
 
+        self._btn_show_qr = tk.Button(
+            frame, text=self._t()["show_qr"],
+            command=self._show_dashboard_qr, font=("Helvetica", 8)
+        )
+        self._btn_show_qr.pack(side="right", padx=4, pady=3)
+
+    def _show_dashboard_qr(self) -> None:
+        """
+        Apre una finestrella con il QR code del link dashboard, comodo per
+        farlo inquadrare al volo da un telefono senza dover leggere/digitare
+        l'URL a mano.
+        """
+        t = self._t()
+        if not _QRCODE_AVAILABLE:
+            messagebox.showerror(t["error_title"], t["qr_unavailable"])
+            return
+
+        link = self._dashboard.link
+        qr_img = qrcode.make(link)
+        qr_img = qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img
+        qr_img = qr_img.resize((320, 320), Image.NEAREST)
+        photo = ImageTk.PhotoImage(qr_img)
+
+        win = tk.Toplevel(self._root)
+        win.title(t["qr_window_title"])
+        win.resizable(False, False)
+        win.transient(self._root)
+
+        lbl_img = tk.Label(win, image=photo, padx=15, pady=15)
+        lbl_img.image = photo  # riferimento forte: evita che il GC cancelli l'immagine
+        lbl_img.pack()
+        tk.Label(win, text=t["qr_hint"], font=("Helvetica", 9), wraplength=300,
+                justify="center").pack(padx=15, pady=(0, 10))
+        tk.Label(win, text=link, font=("Courier", 8), fg="#555555").pack(pady=(0, 10))
+
     def _build_buttons(self, parent: tk.Widget) -> None:
         t = self._t()
         frame = tk.Frame(parent)
         frame.pack(pady=10)
 
-        self._btn_add_log = tk.Button(frame, text=t["add_log"], command=self._add_log)
+        # Azione primaria (la più frequente) in evidenza, quella secondaria
+        # (generazione report, meno frequente) in stile normale.
+        self._btn_add_log = ttk.Button(
+            frame, text=t["add_log"], style="Accent.TButton", command=self._add_log
+        )
         self._btn_add_log.grid(row=0, column=0, padx=10)
 
-        self._btn_gen_pdf = tk.Button(frame, text=t["generate_pdf"], command=self._generate_reports)
+        self._btn_gen_pdf = ttk.Button(frame, text=t["generate_pdf"], command=self._generate_reports)
         self._btn_gen_pdf.grid(row=0, column=1, padx=10)
-
-    def _build_flags(self, parent: tk.Widget) -> None:
-        frame = tk.Frame(parent)
-        frame.pack(pady=5)
-        try:
-            flag_it = self._load_image(self._flag_list[0], 50, 30)
-            flag_en = self._load_image(self._flag_list[1], 50, 30)
-            btn_it  = tk.Button(frame, image=flag_it, command=lambda: self._change_language("it"))
-            btn_en  = tk.Button(frame, image=flag_en, command=lambda: self._change_language("en"))
-            btn_it.image = flag_it
-            btn_en.image = flag_en
-            btn_it.pack(side="left", padx=10)
-            btn_en.pack(side="left", padx=10)
-        except Exception as e:
-            messagebox.showwarning(self._t()["warning_title"], self._t()["logo_error"].format(e))
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -503,6 +682,7 @@ class RadioLogInterface:
             tk.END,
             f"{date_time} - {sender} → {receiver} : {msg_received} | {msg_sent}"
         )
+        self._update_empty_placeholders()
 
         # Reset campi
         if not self._var_auto_dt.get():
@@ -530,6 +710,12 @@ class RadioLogInterface:
                 messagebox.showerror(t["error_title"], t["mkdir_error"].format(e))
                 return
 
+        # La generazione PDF/XLSX può richiedere qualche istante: disabilita
+        # il pulsante e mostra un testo di avanzamento, così l'app non
+        # sembra "bloccata" senza feedback durante l'operazione.
+        original_text = self._btn_gen_pdf.cget("text")
+        self._btn_gen_pdf.config(state="disabled", text=t["generating"])
+        self._root.update_idletasks()
         try:
             n_pdf  = self._reporter.count_files(
                 self._directory, ".pdf", prefix="rapporto_comunicazioni_radio_"
@@ -573,6 +759,8 @@ class RadioLogInterface:
                 messagebox.showinfo(t["warning_title"], t["chat_report_empty"])
         except Exception as e:
             messagebox.showerror(t["error_title"], t["pdf_gen_error"].format(e))
+        finally:
+            self._btn_gen_pdf.config(state="normal", text=original_text)
 
     def _toggle_manual_dt(self) -> None:
         state = "disabled" if self._var_auto_dt.get() else "normal"
@@ -590,11 +778,22 @@ class RadioLogInterface:
         self._btn_chat_send.config(text=t["chat_send"])
         self._notebook.tab(0, text=t["tab_log"])
         self._notebook.tab(1, text=t["tab_tlc"])
+        self._notebook.tab(2, text=t["tab_map"])
         self._tlc_panel.set_language(lang)
+        self._map_panel.set_language(lang)
         for key in ("operator", "event", "manual_datetime",
                     "sender", "receiver", "msg_received", "msg_sent"):
             self._labels[key].config(text=t[key])
         self._labels["auto_datetime"].config(text=t["auto_datetime"])
+        self._form_labelframe.config(text=t["form_header"])
+        if self._dashboard:
+            self._btn_show_qr.config(text=t["show_qr"])
+        # Su Windows le voci di primo livello della barra menu (quella
+        # assegnata con root.config(menu=...)) non supportano l'aggiornamento
+        # dinamico dell'etichetta via entryconfig (limitazione nativa Win32
+        # esposta da Tk): la barra viene semplicemente ricreata da capo.
+        self._build_menu_bar(self._root)
+        self._update_empty_placeholders()
 
     def _refresh_led(self) -> None:
         t = self._t()
@@ -605,6 +804,19 @@ class RadioLogInterface:
             self._canvas.itemconfig(self._led, fill="red")
             self._lbl_status.config(text=t["disconnected"])
         self._root.after(self.LED_REFRESH_MS, self._refresh_led)
+
+    def _refresh_dashboard_link(self) -> None:
+        """
+        Rilegge il link dashboard (l'IP LAN rilevato può cambiare durante
+        l'esecuzione, es. passaggio da Wi-Fi a cavo) e aggiorna l'etichetta
+        solo se è davvero cambiato, per non far "lampeggiare" il testo.
+        Il QR code invece è già sempre aggiornato: viene generato al volo
+        ogni volta che si apre la finestrella, rileggendo il link fresco.
+        """
+        current = self._dashboard.link
+        if self._lbl_link.cget("text") != current:
+            self._lbl_link.config(text=current)
+        self._root.after(self.DASHBOARD_LINK_REFRESH_MS, self._refresh_dashboard_link)
 
     def _copy_dashboard_link(self) -> None:
         """Copia il link della dashboard negli appunti e mostra conferma."""
@@ -658,13 +870,17 @@ class RadioLogInterface:
         timestamp = now.strftime("%H:%M:%S")
         full_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        idx = self._chat_listbox.size()
-        self._chat_listbox.insert(tk.END, f"[{timestamp}] {sender}: {text}")
-        color = "#00e5ff" if origin == "locale" else "#ff6b35"
-        self._chat_listbox.itemconfig(idx, foreground=color)
+        tag = "locale" if origin == "locale" else "remoto"
+        needs_newline = self._chat_listbox.index("end-1c") != "1.0"
+        self._chat_listbox.config(state="normal")
+        if needs_newline:
+            self._chat_listbox.insert(tk.END, "\n")
+        self._chat_listbox.insert(tk.END, f"[{timestamp}] {sender}: {text}", tag)
+        self._chat_listbox.config(state="disabled")
         self._chat_listbox.see(tk.END)
 
         self._chat_log.append((full_datetime, sender, origin, text))
+        self._update_empty_placeholders()
 
     def _load_recovery(self) -> None:
         """
@@ -682,10 +898,22 @@ class RadioLogInterface:
             )
             if self._dashboard:
                 self._dashboard.push_entry(log)
+        self._update_empty_placeholders()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _update_empty_placeholders(self) -> None:
+        """Mostra/nasconde i messaggi guida sopra le liste log/chat vuote."""
+        if self._listbox.size() == 0:
+            self._lbl_log_empty.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            self._lbl_log_empty.place_forget()
+        if self._chat_listbox.index("end-1c") == "1.0":
+            self._lbl_chat_empty.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            self._lbl_chat_empty.place_forget()
 
     def _listbox_move_up(self, event=None) -> str:
         """Sposta la selezione del listbox di una riga verso l'alto."""

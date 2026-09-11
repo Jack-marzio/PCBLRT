@@ -159,7 +159,8 @@ class Application:
 
     def __init__(self):
         config_file = BASE / "configurator.txt"
-        self._cfg      = ConfigManager(str(config_file))
+        self._config_path = str(config_file)
+        self._cfg      = ConfigManager(self._config_path)
         self._reporter = ReportCreator()
 
     # ------------------------------------------------------------------
@@ -173,7 +174,7 @@ class Application:
         drive_path    = cfg["Drive_path"]
         program_title = cfg["Program_title"]
         proprieties   = cfg["Proprieties"]
-        web_port      = int(cfg.get("Web_dashboard_port", 8080))
+        web_port      = int(cfg.get("Web_dashboard_port") or 8080)
         login_dt      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Risolvi i path delle risorse grafiche rispetto a BASE
@@ -183,7 +184,10 @@ class Application:
         # ── Database apparati (TLC Point) ─────────────────────────────
         # File Excel con anagrafica apparati e storico carico/scarico.
         # Se non esiste viene creato automaticamente al primo avvio.
-        apparati_db_path = str(BASE / cfg.get("Apparati_db_path", "apparati.xlsx"))
+        apparati_db_path = str(BASE / (cfg.get("Apparati_db_path") or "apparati.xlsx"))
+
+        # ── Database mappa GIS (operatori/ostacoli) ───────────────────
+        map_data_path = str(BASE / (cfg.get("Map_data_path") or "mappa_gis.json"))
 
         # ── Token sessione ───────────────────────────────────────────
         # Usato come session_id della dashboard. Se fisso nel configurator
@@ -209,7 +213,10 @@ class Application:
             dashboard.start()
 
         # 3. Selezione directory di salvataggio
-        directory = DirectorySelector(logo_path, flag_list, drive_path).run()
+        directory_state_path = str(BASE / ".last_directory_choice.json")
+        directory = DirectorySelector(
+            logo_path, flag_list, drive_path, state_path=directory_state_path
+        ).run()
         if not directory:
             print("Directory non selezionata. Uscita dal programma.")
             sys.exit(0)
@@ -225,10 +232,11 @@ class Application:
             directory        = directory,
             n_files          = n_protocol,
             logo_path        = logo_path,
-            flag_list        = flag_list,
             program_title    = program_title,
             dashboard        = dashboard,  # None se remote_enabled = false
             apparati_db_path = apparati_db_path,
+            map_data_path    = map_data_path,
+            config_path      = self._config_path,
         )
 
         # 6. Wiring bidirezionale della chat (solo se la dashboard locale è attiva)

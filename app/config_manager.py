@@ -46,3 +46,17 @@ class ConfigManager:
 
     def __getitem__(self, key: str):
         return self._config[key]
+
+    def set(self, key: str, value) -> None:
+        """Imposta un parametro in memoria (richiede save() per persisterlo)."""
+        self._config[key] = value
+
+    def save(self) -> None:
+        """Riscrive il file di configurazione con i parametri correnti."""
+        lines = []
+        for key, value in self._config.items():
+            if isinstance(value, list):
+                value = "[" + ", ".join(value) + "]"
+            lines.append(f"{key}={value}")
+        with open(self._file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")

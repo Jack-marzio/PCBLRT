@@ -1,0 +1,16 @@
+# Bytecode/cache Python
+__pycache__/
+*.pyc
+
+# Output di PyInstaller (rigenerati da build.py, non vanno versionati)
+build/
+dist/
+
+# Stato locale di sessione (non è dato di progetto, solo preferenza UI)
+.last_directory_choice.json
+
+# Backup locali generati automaticamente dall'app durante l'uso/i test
+# (recovery di sessione e copie report) — non sono dati di progetto.
+app/recovery/
+app/report_locale/
+
